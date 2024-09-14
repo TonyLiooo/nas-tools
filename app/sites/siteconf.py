@@ -10,6 +10,7 @@ from app.utils.commons import singleton
 from config import Config
 from web.backend.pro_user import ProUser
 
+import asyncio
 
 @singleton
 class SiteConf:
@@ -96,7 +97,7 @@ class SiteConf:
                 return v
         return {}
 
-    def check_torrent_attr(self, torrent_url, cookie, ua=None, proxy=False):
+    def check_torrent_attr(self, torrent_url, cookie, local_storage=None, ua=None, proxy=False):
         """
         检验种子是否免费，当前做种人数
         :param torrent_url: 种子的详情页面
@@ -132,11 +133,12 @@ class SiteConf:
         xpath_strs = self.get_grap_conf(torrent_url)
         if not xpath_strs:
             return ret_attr
-        html_text = self.__get_site_page_html(url=torrent_url,
+        html_text = asyncio.run(self.__get_site_page_html(url=torrent_url,
                                               cookie=cookie,
+                                              local_storage = local_storage,
                                               ua=ua,
                                               render=xpath_strs.get('RENDER'),
-                                              proxy=proxy)
+                                              proxy=proxy))
         if not html_text:
             return ret_attr
         try:
@@ -222,14 +224,16 @@ class SiteConf:
 
     @staticmethod
     @lru_cache(maxsize=128)
-    def __get_site_page_html(url, cookie, ua, render=False, proxy=False):
+    async def __get_site_page_html(url, cookie, local_storage=None, ua=None, render=False, proxy=False):
         chrome = ChromeHelper(headless=True)
         if render and chrome.get_status():
             # 开渲染
-            if chrome.visit(url=url, cookie=cookie, ua=ua, proxy=proxy):
+            if await chrome.visit(url=url, cookie=cookie, local_storage=local_storage, ua=ua, proxy=proxy):
                 # 等待页面加载完成
-                time.sleep(10)
-                return chrome.get_html()
+                # await chrome._tab.sleep(10)
+                html = await chrome.get_html()
+                await chrome.quit()
+                return html
         else:
             res = RequestUtils(
                 cookies=cookie,
@@ -239,4 +243,5 @@ class SiteConf:
             if res and res.status_code == 200:
                 res.encoding = res.apparent_encoding
                 return res.text
+        await chrome.quit()
         return ""

@@ -6,6 +6,8 @@ class IndexerConf(object):
                  datas=None,
                  siteid=None,
                  cookie=None,
+                 local_storage=None,
+                 api_key=None,
                  name=None,
                  rule=None,
                  public=None,
@@ -44,6 +46,10 @@ class IndexerConf(object):
         self.category = datas.get('category', {})
         # Cookie
         self.cookie = cookie
+        # local_storage
+        self.local_storage = local_storage
+        # api_key
+        self.api_key = api_key
         # User-Agent
         self.ua = ua
         # 过滤规则
@@ -72,6 +78,8 @@ class IndexerConf(object):
             "torrents": self.torrents or {},
             "category": self.category or {},
             "cookie": self.cookie or "",
+            "local_storage": self.local_storage or "",
+            "api_key": self.api_key or "",
             "ua": self.ua or "",
             "rule": self.rule or "",
             "public": self.public or False,

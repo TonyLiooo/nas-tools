@@ -46,7 +46,7 @@ class Tjupt(_ISiteSigninHandler):
         """
         return True if StringUtils.url_equal(url, cls.site_url) else False
 
-    def signin(self, site_info: dict):
+    async def signin(self, site_info: dict):
         """
         执行签到操作
         :param site_info: 站点信息，含有站点Url、站点Cookie、UA等信息
@@ -191,11 +191,11 @@ class Tjupt(_ISiteSigninHandler):
         # 豆瓣未获取到答案，使用google识图
         image_search_url = f"https://lens.google.com/uploadbyurl?url={img_url}"
         chrome = ChromeHelper()
-        chrome.visit(url=image_search_url, proxy=Config().get_proxies())
+        await chrome.visit(url=image_search_url, proxy=Config().get_proxies())
         # 等待页面加载
-        time.sleep(3)
+        await chrome._tab.sleep(3)
         # 获取识图结果
-        html_text = chrome.get_html()
+        html_text = await chrome.get_html()
         search_results = BeautifulSoup(html_text, "lxml").find_all("div", class_="UAiK1e")
         if not search_results:
             self.info(f'Google识图失败，未获取到识图结果')
@@ -231,6 +231,7 @@ class Tjupt(_ISiteSigninHandler):
                                      captcha_img_hash=captcha_img_hash)
             else:
                 self.info(f'Google识图结果中未有选项符合条件')
+        await chrome.quit()
         # 没有匹配签到成功，则签到失败
         return False, f'【{site}】签到失败，未获取到匹配答案'
 

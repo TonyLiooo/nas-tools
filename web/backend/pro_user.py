@@ -266,19 +266,19 @@ class ProUser(UserMixin):
 
     @property
     def public_sites(self):
-        return _public_sites
+        return self._public_sites
 
     @public_sites.setter
     def public_sites(self, public_sites):
-        pass
+        self._public_sites = public_sites
 
     @property
     def brush_conf(self):
-        return _brush_conf
+        return self._brush_conf
 
     @brush_conf.setter
     def brush_conf(self, brush_conf):
-        pass
+        self._brush_conf = brush_conf
 
     def __parse_users_sites(self, user_sites_bin_path):
         if not os.path.exists(user_sites_bin_path):
@@ -324,6 +324,8 @@ class ProUser(UserMixin):
                     url,
                     siteid=None,
                     cookie=None,
+                    local_storage=None,
+                    api_key=None,
                     ua=None,
                     name=None,
                     rule=None,
@@ -358,6 +360,8 @@ class ProUser(UserMixin):
         return IndexerConf(datas=indexer,
                            siteid=siteid,
                            cookie=cookie,
+                           local_storage=local_storage,
+                           api_key=api_key,
                            name=name,
                            rule=rule,
                            public=public,

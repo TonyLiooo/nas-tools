@@ -110,15 +110,14 @@ trio-websocket==0.10.3
 typing_extensions==4.7.1
 tzdata==2023.3
 tzlocal==5.0.1
-undetected-chromedriver==3.5.3
 urllib3==2.0.4
 w3lib==2.1.2
 watchdog==3.0.0
 wcwidth==0.2.6
-webdriver-manager==4.0.0
 websockets==11.0.3
 Werkzeug==2.3.7
 wsproto==1.2.0
 zhconv==1.4.3
 jellyfish==1.0.4
 chardet==5.2.0
+nodriver==0.37

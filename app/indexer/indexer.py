@@ -8,6 +8,7 @@ from app.utils.commons import singleton
 from app.utils.types import SearchType, IndexerType, ProgressKey
 from app.sites import Sites
 from config import Config
+from typing import Union
 
 @singleton
 class Indexer(object):
@@ -107,7 +108,7 @@ class Indexer(object):
         """
         return self._client.list(url=url, page=page, keyword=keyword)
 
-    def __get_client(self, ctype: [IndexerType, str], conf=None):
+    def __get_client(self, ctype: Union[IndexerType, str], conf=None):
         return self.__build_class(ctype=ctype, conf=conf)
 
     def get_client(self):
@@ -123,7 +124,7 @@ class Indexer(object):
         return self._client_type
 
     def search_by_keyword(self,
-                          key_word: [str, list],
+                          key_word: Union[str, list],
                           filter_args: dict,
                           match_media=None,
                           in_from: SearchType = None):

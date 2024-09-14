@@ -8,6 +8,8 @@ from lxml import etree
 from app.utils import SystemUtils
 from config import RMT_SUBEXT
 
+import asyncio
+from nodriver import Tab, Element
 
 class SiteHelper:
 
@@ -24,6 +26,7 @@ class SiteHelper:
         # 存在明显的密码输入框，说明未登录
         if html.xpath("//input[@type='password']"):
             return False
+
         # 是否存在登出和用户面板等链接
         xpaths = ['//a[contains(@href, "logout")'
                   ' or contains(@data-url, "logout")'
@@ -39,6 +42,25 @@ class SiteHelper:
             return True
 
         return False
+    
+    @staticmethod
+    async def wait_for_logged_in(tab:Tab, timeout=15):
+        """
+        等待页面登录完成
+        :param tab: nodriver tab对象
+        :param timeout: 最大等待时间（秒）
+        :return: bool
+        """
+        end_time = asyncio.get_event_loop().time() + timeout
+        while True:
+            html_text = await tab.get_content()
+            if SiteHelper.is_logged_in(html_text):
+                await asyncio.sleep(1)
+                return True
+            if asyncio.get_event_loop().time() > end_time:
+                return False
+            await asyncio.sleep(1)
+            
 
     @staticmethod
     def get_url_subtitle_name(disposition, url):

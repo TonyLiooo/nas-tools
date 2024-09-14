@@ -186,11 +186,18 @@
             <textarea class="form-control" id="site_cookie" rows="2" placeholder="站点COOKIE"></textarea>
           </div>
         </div>
+        <div class="col-lg-12">
+          <div class="mb-3">
+            <label class="form-label">Local Storage <span class="form-help"
+                title="如需要可设置站点Local Storage，用于站点自动签到、站点数据统计、刷流、内置索引器等浏览器仿真功能，可通过cookiecloud同步或浏览器控制台发“Object.fromEntries(Object.entries(localStorage));”获取" data-bs-toggle="tooltip">?</span></label>
+            <textarea class="form-control" id="site_local_storage" rows="2" placeholder="站点Local Storage"></textarea>
+          </div>
+        </div>
         <div class="row">
           <div class="col-lg-12">
             <div class="mb-3">
               <label class="form-label">令牌 <span class="form-help"
-                                                         title="数据统计，数据获取，刷流，搜索请求等使用的 Api Key，为空则尝试使用 Cookies（有些站点推荐使用 Api Key)" data-bs-toggle="tooltip">?</span></label>
+                  title="数据统计，数据获取，刷流，搜索请求等使用的 Api Key，为空则尝试使用 Cookies（有些站点推荐使用 Api Key）" data-bs-toggle="tooltip">?</span></label>
               <div class="input-group input-group-flat">
                 <input type="text" class="form-control" id="site_api_key" value="" placeholder="令牌/Api Key">
               </div>
@@ -489,6 +496,7 @@
     $("#site_rssurl").val('');
     $("#site_signurl").val('');
     $("#site_cookie").val('');
+    $("#site_local_storage").val('');
     $("#site_api_key").val('');
     $("#site_rule").val('');
     $("#site_ua").val('');
@@ -518,6 +526,7 @@
         $("#site_pri").val(ret.site.pri);
         $("#site_rssurl").val(ret.site.rssurl);
         $("#site_signurl").val(ret.site.signurl);
+        $("#site_local_storage").val(ret.site.local_storage);
         $("#site_cookie").val(ret.site.cookie);
         $("#site_api_key").val(ret.site.api_key);
         $("#site_ua").val(ret.site.ua);
@@ -597,6 +606,8 @@
     }
     //Cookie
     let site_cookie = $("#site_cookie").val();
+    //local storage
+    let site_local_storage = $("#site_local_storage").val();
     //Api Key
     let site_api_key = $("#site_api_key").val();
     //RSS URL
@@ -654,6 +665,7 @@
       "site_rssurl": site_rssurl,
       "site_signurl": site_signurl,
       "site_cookie": site_cookie,
+      "site_local_storage": site_local_storage,
       "site_api_key": site_api_key,
       "site_include": site_uses,
       "site_note": {

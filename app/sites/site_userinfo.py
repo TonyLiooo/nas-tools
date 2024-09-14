@@ -9,12 +9,15 @@ from urllib.parse import urlparse, urlunparse
 import requests
 
 import log
-from app.helper import ChromeHelper, SubmoduleHelper, DbHelper
+from app.helper import ChromeHelper, SubmoduleHelper, DbHelper, SiteHelper
 from app.message import Message
 from app.sites.sites import Sites
 from app.utils import RequestUtils, ExceptionUtils, StringUtils
 from app.utils.commons import singleton
 from config import Config
+
+import asyncio
+import inspect
 
 lock = Lock()
 
@@ -56,12 +59,14 @@ class SiteUserInfo(object):
                 ExceptionUtils.exception_traceback(e)
         return None
 
-    def build(self, url, site_id, site_name,
-              site_cookie=None, ua=None, emulate=None, proxy=False):
-        if not site_cookie:
+    async def build(self, url, site_id, site_name,
+              site_cookie=None, site_local_storage=None, site_api_key=None, ua=None, emulate=None, proxy=False):
+        if not site_cookie and not site_local_storage and not site_api_key:
             return None
         session = requests.Session()
-        log.debug(f"【Sites】站点 {site_name} url={url} site_cookie={site_cookie} ua={ua}")
+        log.debug(
+            f"【Sites】站点 {site_name} url={url} site_cookie={repr(site_cookie)} site_api_key={repr(site_api_key)} ua={ua} local_storage={'True' if site_local_storage else 'False'}"
+        )
 
         # 站点流控
         if self.sites.check_ratelimit(site_id):
@@ -70,16 +75,19 @@ class SiteUserInfo(object):
         # 检测环境，有浏览器内核的优先使用仿真签到
         chrome = ChromeHelper()
         if emulate and chrome.get_status():
-            if not chrome.visit(url=url, ua=ua, cookie=site_cookie, proxy=proxy):
+            if not await chrome.visit(url=url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, proxy=proxy):
                 log.error("【Sites】%s 无法打开网站" % site_name)
                 return None
             # 循环检测是否过cf
-            cloudflare = chrome.pass_cloudflare()
+            cloudflare = await chrome.pass_cloudflare()
             if not cloudflare:
                 log.error("【Sites】%s 跳转站点失败" % site_name)
                 return None
-            # 判断是否已签到
-            html_text = chrome.get_html()
+            logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+            html_text = await chrome.get_html()
+            if logged_in and site_local_storage:
+                local_storage = await chrome.get_local_storage()
+                self.sites.update_site_local_storage(siteid=site_id, local_storage=local_storage)
         else:
             proxies = Config().get_proxies() if proxy else None
             res = RequestUtils(cookies=site_cookie,
@@ -147,9 +155,9 @@ class SiteUserInfo(object):
         parsed_url = urlparse(url)
         if parsed_url.netloc:
             site_domain_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
-        return site_schema(site_name, site_domain_url, site_cookie, html_text, session=session, ua=ua, emulate=emulate, proxy=proxy)
+        return site_schema(site_name, site_domain_url, site_cookie, site_local_storage = site_local_storage, index_html = html_text, session=session, ua=ua, emulate=emulate, proxy=proxy, chrome=chrome)
 
-    def __refresh_site_data(self, site_info):
+    async def __refresh_site_data(self, site_info):
         """
         更新单个site 数据信息
         :param site_info:
@@ -159,6 +167,8 @@ class SiteUserInfo(object):
         site_name = site_info.get("name")
         site_url = site_info.get("strict_url")
         original_site_url = site_url
+        site_api_key = site_info.get("api_key")
+        site_local_storage = site_info.get("local_storage")
         if not site_url:
             return
         site_cookie = site_info.get("cookie")
@@ -184,22 +194,28 @@ class SiteUserInfo(object):
                     pass
 
         try:
-            site_user_info = self.build(url=site_url,
+            site_user_info = await self.build(url=site_url,
                                         site_id=site_id,
                                         site_name=site_name,
                                         site_cookie=site_cookie,
+                                        site_local_storage=site_local_storage,
+                                        site_api_key=site_api_key,
                                         ua=ua,
                                         emulate=chrome,
                                         proxy=proxy)
             if site_user_info:
                 log.debug(f"【Sites】站点 {site_name} 开始以 {site_user_info.site_schema()} 模型解析")
                 # 开始解析
-                site_user_info.parse()
+                if inspect.iscoroutinefunction(site_user_info.parse):
+                    await site_user_info.parse()
+                else:
+                    site_user_info.parse()
                 log.debug(f"【Sites】站点 {site_name} 解析完成")
 
                 # 获取不到数据时，仅返回错误信息，不做历史数据更新
                 if site_user_info.err_msg:
                     self._sites_data.update({site_name: {"err_msg": site_user_info.err_msg}})
+                    await site_user_info.chrome.quit()
                     return
 
                 # 发送通知，存在未读消息
@@ -227,12 +243,14 @@ class SiteUserInfo(object):
                 log.debug(f"【Sites】站点 {site_name} 数据：{_updated_sites_json}")
 
                 self._sites_data.update(_updated_sites_data)
-
+                await site_user_info.chrome.quit()
                 return site_user_info
 
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
             log.error(f"【Sites】站点 {site_name} 获取流量数据失败：{str(e)}")
+        
+        await site_user_info.chrome.quit()
 
     def __notify_unread_msg(self, site_name, site_user_info, unread_msg_notify):
         if site_user_info.message_unread <= 0:
@@ -324,10 +342,14 @@ class SiteUserInfo(object):
             if not refresh_sites:
                 return
 
-            # 并发刷新
-            with ThreadPool(min(len(refresh_sites), self._MAX_CONCURRENCY)) as p:
-                site_user_infos = p.map(self.__refresh_site_data, refresh_sites)
-                site_user_infos = [info for info in site_user_infos if info]
+            try:
+                with ThreadPool(min(len(refresh_sites), self._MAX_CONCURRENCY)) as pool:
+                    results = pool.map(lambda site: asyncio.run(self.__refresh_site_data(site)), refresh_sites)
+
+                    site_user_infos = [result for result in results if result]
+                    site_user_infos = [info for info in site_user_infos if info is not None]
+            except Exception as e:
+                log.error(f"An error occurred: {e}")
 
             # 登记历史数据
             self.dbhelper.insert_site_statistics_history(site_user_infos)
@@ -423,7 +445,7 @@ class SiteUserInfo(object):
                 try:
                     dates.append(datetime.strptime(s.get("join_at"), '%Y-%m-%d %H:%M:%S'))
                 except Exception as err:
-                    print(str(err))
+                    log.error(str(err))
                     pass
         if dates:
             return min(dates).strftime("%Y-%m-%d")

@@ -1,9 +1,13 @@
 import requests
 
 import log
-from app.utils import RequestUtils, MteamUtils
+from urllib.parse import quote, urljoin
+from app.helper import ChromeHelper
+from app.utils import StringUtils, MteamUtils
 from config import Config
+import asyncio
 
+from bs4 import BeautifulSoup
 
 class MTeamSpider(object):
     _appid = "nastool"
@@ -13,6 +17,7 @@ class MTeamSpider(object):
     _pageurl = "%sdetail/%s"
 
     def __init__(self, indexer):
+        self._indexer = indexer
         if indexer:
             self._indexerid = indexer.id
             self._domain = indexer.domain
@@ -97,8 +102,101 @@ class MTeamSpider(object):
             return True, []
         return False, torrents
 
+    async def browser_search(self, keyword, page=None, mtype=None):
+        """
+        开始搜索
+        :param: keyword: 搜索关键字
+        :param: indexer: 站点配置
+        :param: page: 页码
+        :param: mtype: 类型
+        :return: (是否发生错误，种子列表)
+        """
+        if not keyword:
+            keyword = ""
+        if isinstance(keyword, list):
+            keyword = " ".join(keyword)
+        chrome = ChromeHelper()
+        if not chrome.get_status():
+            return True, []
+        # 请求路径
+        torrentspath = r'browse?keyword={keyword}'
+        search_url = urljoin(self._indexer.domain, torrentspath.replace("{keyword}", quote(keyword)))
+        # 使用浏览器获取HTML文本
+        if not await chrome.visit(url=search_url,
+                            local_storage=self._indexer.local_storage,
+                            ua=self._indexer.ua,
+                            proxy=self._indexer.proxy):
+            return True, []
+        cloudflare = await chrome.pass_cloudflare()
+        if not cloudflare:
+            return True, []
+        # 等待页面加载完成
+        await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
+        torrents = []
+        while True:
+            await chrome.wait_until_element_state(tab=chrome._tab,text="//div[@id='float-btns']//button//span[@role='img' and contains(@class, 'anticon-loading') and @aria-label='loading']", should_appear=False, timeout=20)
+            # 获取HTML文本
+            html_text = await chrome.get_html()
+            if not html_text:
+                return True, torrents
+            soup = BeautifulSoup(html_text, 'lxml')
+            tbody = soup.find('tbody', class_='bg-[#bccad6]')
+            if tbody:
+                # Find all rows in the table body
+                rows = tbody.find_all('tr')
+            else:
+                rows = soup.find_all('tr')
+            if rows:
+                # Extract data from each row
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) == 7:
+                        imdb_link = row.find('a', href=True, text=lambda x: x and 'imdb' in x.lower())
+                        imdb_id = ''
+                        if imdb_link and 'imdb.com/title/' in imdb_link['href']:
+                            imdb_id = imdb_link['href'].split('/title/')[1].split('/')[0]
+                        discount_tag = cells[1].find('span', {'class': 'ant-tag'})
+                        down_discount = 1.0
+                        if discount_tag:
+                            discount_text = discount_tag.get_text(strip=True)
+                            if discount_text == 'free':
+                                down_discount = 0.0
+                            elif '%' in discount_text:
+                                down_discount = float(discount_text.replace('%', '')) / 100.0
+                        torrent = {
+                            'indexer': self._indexerid,
+                            'title': cells[1].find('strong').get_text(strip=True),
+                            'description': cells[1].find('span', {'class': 'ant-typography'}).get_text(strip=True),
+                            'enclosure': urljoin(self._indexer.domain, cells[1].find('a')['href']),
+                            'size': StringUtils.num_filesize(cells[4].get_text(strip=True)),
+                            'seeders': cells[5].get_text(strip=True),
+                            'peers': cells[6].get_text(strip=True),
+                            'downloadvolumefactor': down_discount,
+                            'uploadvolumefactor': 1.0,
+                            'page_url': urljoin(self._indexer.domain, cells[1].find('a')['href']),
+                            'imdbid': imdb_id
+                        }
+                        torrents.append(torrent)
+
+            pagination_next = soup.find('li', class_='ant-pagination-next')
+            next_obj = await chrome._tab.find('//li[@title="下一頁" and contains(@class, "ant-pagination-next")]/button')
+            # Extract the aria-disabled attribute
+            if pagination_next and pagination_next.get('aria-disabled', 'false')=='false' and next_obj:
+                await next_obj.click()
+                await chrome._tab.sleep(0.5)
+            else:
+                break
+
+        return False, torrents
+    
     def search(self, keyword, page=None):
+        error_flag = True
+        result_array = []
         if not keyword:
             return True, []
-
-        return self.inner_search(keyword, page)
+        if self._indexer.api_key:
+            error_flag, result_array = self.inner_search(keyword, page)
+        if not result_array and self._indexer.local_storage:
+            error_flag, result_array = asyncio.run(self.browser_search(keyword, page))
+        return error_flag, result_array
+        

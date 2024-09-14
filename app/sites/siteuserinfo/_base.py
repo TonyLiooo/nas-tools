@@ -24,7 +24,7 @@ class _ISiteUserInfo(metaclass=ABCMeta):
     # 站点解析时判断顺序，值越小越先解析
     order = SITE_BASE_ORDER
 
-    def __init__(self, site_name, url, site_cookie, index_html, session=None, ua=None, emulate=False, proxy=None):
+    def __init__(self, site_name, url, site_cookie, site_local_storage=None, index_html=None, session=None, ua=None, emulate=False, proxy=None, chrome=None):
         super().__init__()
         # 站点信息
         self.site_name = None
@@ -66,6 +66,7 @@ class _ISiteUserInfo(metaclass=ABCMeta):
         # 内部数据
         self._base_url = None
         self._site_cookie = None
+        self._site_local_storage = None
         self._index_html = None
         self._addition_headers = None
 
@@ -86,12 +87,14 @@ class _ISiteUserInfo(metaclass=ABCMeta):
         self._favicon_url = urljoin(self._base_url, "favicon.ico")
         self.site_favicon = ""
         self._site_cookie = site_cookie
+        self._site_local_storage = site_local_storage
         self._index_html = index_html
         self._session = session if session else requests.Session()
         self._ua = ua
 
         self._emulate = emulate
         self._proxy = proxy
+        self.chrome = chrome
 
     def site_schema(self):
         """
@@ -109,7 +112,7 @@ class _ISiteUserInfo(metaclass=ABCMeta):
         """
         return False
 
-    def parse(self):
+    async def parse(self):
         """
         解析站点信息
         :return:
@@ -120,16 +123,16 @@ class _ISiteUserInfo(metaclass=ABCMeta):
 
         self._parse_site_page(self._index_html)
         self._parse_user_base_info(self._index_html)
-        self._pase_unread_msgs()
+        await self._pase_unread_msgs()
         if self._user_traffic_page:
-            self._parse_user_traffic_info(self._get_page_content(urljoin(self._base_url, self._user_traffic_page)))
+            self._parse_user_traffic_info(await self._get_page_content(urljoin(self._base_url, self._user_traffic_page)))
         if self._user_detail_page:
-            self._parse_user_detail_info(self._get_page_content(urljoin(self._base_url, self._user_detail_page)))
+            self._parse_user_detail_info(await self._get_page_content(urljoin(self._base_url, self._user_detail_page)))
 
-        self._parse_seeding_pages()
+        await self._parse_seeding_pages()
         self.seeding_info = json.dumps(self.seeding_info)
 
-    def _pase_unread_msgs(self):
+    async def _pase_unread_msgs(self):
         """
         解析所有未读消息标题和内容
         :return:
@@ -143,31 +146,31 @@ class _ISiteUserInfo(metaclass=ABCMeta):
 
                 msg_links = []
                 next_page = self._parse_message_unread_links(
-                    self._get_page_content(urljoin(self._base_url, link)), msg_links)
+                    await self._get_page_content(urljoin(self._base_url, link)), msg_links)
                 while next_page:
                     next_page = self._parse_message_unread_links(
-                        self._get_page_content(urljoin(self._base_url, next_page)), msg_links)
+                        await self._get_page_content(urljoin(self._base_url, next_page)), msg_links)
 
                 unread_msg_links.extend(msg_links)
 
         for msg_link in unread_msg_links:
             log.debug(f"【Sites】{self.site_name} 信息链接 {msg_link}")
-            head, date, content = self._parse_message_content(self._get_page_content(urljoin(self._base_url, msg_link)))
+            head, date, content = self._parse_message_content(await self._get_page_content(urljoin(self._base_url, msg_link)))
             log.debug(f"【Sites】{self.site_name} 标题 {head} 时间 {date} 内容 {content}")
             self.message_unread_contents.append((head, date, content))
 
-    def _parse_seeding_pages(self):
+    async def _parse_seeding_pages(self):
         if self._torrent_seeding_page:
             # 第一页
             next_page = self._parse_user_torrent_seeding_info(
-                self._get_page_content(urljoin(self._base_url, self._torrent_seeding_page),
+                await self._get_page_content(urljoin(self._base_url, self._torrent_seeding_page),
                                        self._torrent_seeding_params,
                                        self._torrent_seeding_headers))
 
             # 其他页处理
             while next_page:
                 next_page = self._parse_user_torrent_seeding_info(
-                    self._get_page_content(urljoin(urljoin(self._base_url, self._torrent_seeding_page), next_page),
+                    await self._get_page_content(urljoin(urljoin(self._base_url, self._torrent_seeding_page), next_page),
                                            self._torrent_seeding_params,
                                            self._torrent_seeding_headers),
                     multi_page=True)
@@ -205,7 +208,7 @@ class _ISiteUserInfo(metaclass=ABCMeta):
         if res:
             self.site_favicon = base64.b64encode(res.content).decode()
 
-    def _get_page_content(self, url, params=None, headers=None):
+    async def _get_page_content(self, url, params=None, headers=None):
         """
         :param url: 网页地址
         :param params: post参数
@@ -242,21 +245,26 @@ class _ISiteUserInfo(metaclass=ABCMeta):
                                timeout=60,
                                proxies=proxies,
                                headers=req_headers).get_res(url=url)
-        if res is not None and res.status_code in (200, 500, 403):
+        if (res is None and self._emulate) or (res is not None and res.status_code in (200, 500, 403)):
             # 如果cloudflare 有防护，尝试使用浏览器仿真
-            if under_challenge(res.text):
-                log.debug(f"【Sites】{self.site_name} 检测到Cloudflare，需要浏览器仿真")
-                chrome = ChromeHelper()
+            if res is None or (under_challenge(res.text) or not SiteHelper.is_logged_in(res.text)):
+                log.debug(f"【Sites】{self.site_name} 检测到Cloudflare或未获取到登录数据，需要浏览器仿真")
+                if self.chrome:
+                    chrome = self.chrome
+                else:
+                    self.chrome = ChromeHelper()
+                    chrome = self.chrome
                 if self._emulate and chrome.get_status():
-                    if not chrome.visit(url=url, ua=self._ua, cookie=self._site_cookie, proxy=self._proxy):
+                    if not await chrome.visit(url=url, ua=self._ua, cookie=self._site_cookie, local_storage=self._site_local_storage, proxy=self._proxy):
                         log.error(f"【Sites】{self.site_name} 无法打开网站")
                         return ""
                     # 循环检测是否过cf
-                    cloudflare = chrome.pass_cloudflare()
+                    cloudflare = await chrome.pass_cloudflare()
                     if not cloudflare:
                         log.error(f"【Sites】{self.site_name} 跳转站点失败")
                         return ""
-                    return chrome.get_html()
+                    await SiteHelper.wait_for_logged_in(chrome._tab)
+                    return await chrome.get_html()
                 else:
                     log.warn(
                         f"【Sites】{self.site_name} 检测到Cloudflare，需要浏览器仿真，但是浏览器不可用或者未开启浏览器仿真")

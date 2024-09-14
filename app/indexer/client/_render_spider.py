@@ -4,15 +4,13 @@ import time
 from urllib.parse import quote
 
 from pyquery import PyQuery
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as es
-from selenium.webdriver.support.wait import WebDriverWait
 
 from app.helper import ChromeHelper
 from app.indexer.client._spider import TorrentSpider
 from app.utils import ExceptionUtils
 from config import Config
 
+import asyncio
 
 class RenderSpider(object):
     torrentspider = None
@@ -28,7 +26,7 @@ class RenderSpider(object):
         self.torrents_info_array = []
         self.result_num = Config().get_config('pt').get('site_search_result_num') or 100
 
-    def search(self, keyword, page=None, mtype=None):
+    async def search(self, keyword, page=None, mtype=None):
         """
         开始搜索
         :param: keyword: 搜索关键字
@@ -66,53 +64,62 @@ class RenderSpider(object):
             if not search_input or not search_button:
                 return True, []
             # 使用浏览器打开页面
-            if not chrome.visit(url=search_url,
+            if not await chrome.visit(url=search_url,
                                 cookie=self._indexer.cookie,
+                                local_storage=self._indexer.local_storage,
                                 ua=self._indexer.ua,
                                 proxy=self._indexer.proxy):
+                await chrome.quit()
                 return True, []
-            cloudflare = chrome.pass_cloudflare()
+            cloudflare = await chrome.pass_cloudflare()
             if not cloudflare:
+                await chrome.quit()
                 return True, []
             # 模拟搜索操作
             try:
                 # 执行脚本
                 if pre_script:
-                    chrome.execute_script(pre_script)
+                    await chrome.execute_script(pre_script)
                 # 等待可点击
-                submit_obj = WebDriverWait(driver=chrome.browser,
-                                           timeout=10).until(es.element_to_be_clickable((By.XPATH,
-                                                                                         search_button)))
+                submit_obj = await chrome.element_to_be_clickable(selector=search_button, timeout=10)
                 if submit_obj:
                     # 输入用户名
-                    chrome.browser.find_element(By.XPATH, search_input).send_keys(keyword)
+                    search_input_element = await chrome._tab.find(search_input)
+                    await search_input_element.send_keys(keyword)
                     # 提交搜索
-                    submit_obj.click()
+                    await submit_obj.mouse_move()
+                    await submit_obj.mouse_click()
                 else:
+                    await chrome.quit()
                     return True, []
             except Exception as e:
                 ExceptionUtils.exception_traceback(e)
+                await chrome.quit()
                 return True, []
         else:
             # referer
             referer = self._indexer.domain
             # 使用浏览器获取HTML文本
-            if not chrome.visit(url=search_url,
+            if not await chrome.visit(url=search_url,
                                 cookie=self._indexer.cookie,
+                                local_storage=self._indexer.local_storage,
                                 ua=self._indexer.ua,
                                 proxy=self._indexer.proxy):
+                await chrome.quit()
                 return True, []
-            cloudflare = chrome.pass_cloudflare()
+            cloudflare = await chrome.pass_cloudflare()
             if not cloudflare:
+                await chrome.quit()
                 return True, []
         # 等待页面加载完成
-        time.sleep(5)
+        await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
         # 获取HTML文本
-        html_text = chrome.get_html()
+        html_text = await chrome.get_html()
         if not html_text:
+            await chrome.quit()
             return True, []
         # 重新获取Cookie和UA
-        self._indexer.cookie = chrome.get_cookies()
+        self._indexer.cookie = await chrome.get_cookies()
         self._indexer.ua = chrome.get_ua()
         # 设置抓虫参数
         self.torrentspider.setparam(keyword=keyword,
@@ -123,6 +130,7 @@ class RenderSpider(object):
         # 种子筛选器
         torrents_selector = self._indexer.torrents.get('list', {}).get('selector', '')
         if not torrents_selector:
+            await chrome.quit()
             return False, []
         # 解析HTML文本
         html_doc = PyQuery(html_text)
@@ -130,4 +138,5 @@ class RenderSpider(object):
             self.torrents_info_array.append(copy.deepcopy(self.torrentspider.Getinfo(PyQuery(torn))))
             if len(self.torrents_info_array) >= int(self.result_num):
                 break
+        await chrome.quit()
         return False, self.torrents_info_array

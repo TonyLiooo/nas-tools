@@ -1,5 +1,5 @@
 bash
-chromium-chromedriver
+chromium
 curl
 ffmpeg
 fuse3

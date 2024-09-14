@@ -1,16 +1,12 @@
 import time
 import os
 
-from func_timeout import func_timeout, FunctionTimedOut
 from pyquery import PyQuery
-from selenium.common import TimeoutException
-from selenium.webdriver import ActionChains
-from selenium.webdriver.common.by import By
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.wait import WebDriverWait
 
+from nodriver import Tab
+import asyncio
 import log
+
 
 ACCESS_DENIED_TITLES = [
     # Cloudflare
@@ -18,37 +14,40 @@ ACCESS_DENIED_TITLES = [
     # Cloudflare http://bitturk.net/ Firefox
     'Attention Required! | Cloudflare'
 ]
+
 ACCESS_DENIED_SELECTORS = [
     # Cloudflare
     'div.cf-error-title span.cf-code-label span',
     # Cloudflare http://bitturk.net/ Firefox
     '#cf-error-details div.cf-error-overview h1'
 ]
+
 CHALLENGE_TITLES = [
     # Cloudflare
     'Just a moment...',
-    '请稍候…',
     # DDoS-GUARD
-    'DDOS-GUARD',
+    'DDoS-Guard'
 ]
+
 CHALLENGE_SELECTORS = [
     # Cloudflare
-    '#cf-challenge-running', '.ray_id', '.attack-box', '#cf-please-wait', '#challenge-spinner', '#trk_jschal_js',
+    '#cf-challenge-running', '.ray_id', '.attack-box',
+    '#cf-please-wait', '#challenge-spinner', '#trk_jschal_js', '#turnstile-wrapper', '.lds-ring',
     # Custom CloudFlare for EbookParadijs, Film-Paleis, MuziekFabriek and Puur-Hollands
     'td.info #js_info',
     # Fairlane / pararius.com
     'div.vc div.text-box h2'
 ]
-SHORT_TIMEOUT = 6
+SHORT_TIMEOUT = 10
 CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "60"))
 
 
-def resolve_challenge(driver: WebDriver, timeout=CF_TIMEOUT):
+async def resolve_challenge(tab: Tab, timeout=CF_TIMEOUT):
     start_ts = time.time()
     try:
-        func_timeout(timeout, _evil_logic, args=(driver,))
+        await asyncio.wait_for(_evil_logic(tab), timeout=timeout)
         return True
-    except FunctionTimedOut:
+    except asyncio.TimeoutError:
         log.error(f'Error solving the challenge. Timeout {timeout} after {round(time.time() - start_ts, 1)} seconds.')
         return False
     except Exception as e:
@@ -76,83 +75,84 @@ def under_challenge(html_text: str):
             return True
     return False
 
+@staticmethod
+async def check_document_ready(tab:Tab):
+    while await tab.evaluate('document.readyState') != 'complete':
+        await tab.sleep(1)
+    return True
 
-def _until_title_changes(driver: WebDriver, titles):
-    WebDriverWait(driver, SHORT_TIMEOUT).until_not(lambda x: _any_match_titles(x, titles))
-
-
-def _any_match_titles(driver: WebDriver, titles):
-    page_title = driver.title
-    for title in titles:
-        if page_title.lower() == title.lower():
-            return True
-    return False
-
-
-def _until_selectors_disappear(driver: WebDriver, selectors):
-    WebDriverWait(driver, SHORT_TIMEOUT).until_not(lambda x: _any_match_selectors(x, selectors))
-
-
-def _any_match_selectors(driver: WebDriver, selectors):
-    for selector in selectors:
-        html_doc = PyQuery(driver.page_source)
-        if html_doc(selector):
-            return True
-    return False
-
-
-def _evil_logic(driver: WebDriver):
-    driver.implicitly_wait(SHORT_TIMEOUT)
-    # wait for the page
-    html_element = driver.find_element(By.TAG_NAME, "html")
-
-    # find access denied titles
-    if _any_match_titles(driver, ACCESS_DENIED_TITLES):
-        raise Exception('Cloudflare has blocked this request. '
-                        'Probably your IP is banned for this site, check in your web browser.')
-    # find access denied selectors
-    if _any_match_selectors(driver, ACCESS_DENIED_SELECTORS):
-        raise Exception('Cloudflare has blocked this request. '
-                        'Probably your IP is banned for this site, check in your web browser.')
-
-    # find challenge by title
-    challenge_found = False
-    if _any_match_titles(driver, CHALLENGE_TITLES):
-        challenge_found = True
-        log.info("Challenge detected. Title found: " + driver.title)
-    if not challenge_found:
-        # find challenge by selectors
-        if _any_match_selectors(driver, CHALLENGE_SELECTORS):
-            challenge_found = True
-            log.info("Challenge detected. Selector found")
-
-    attempt = 0
-    if challenge_found:
-        while True:
-            try:
-                attempt = attempt + 1
-                # wait until the title changes
-                _until_title_changes(driver, CHALLENGE_TITLES)
-
-                # then wait until all the selectors disappear
-                _until_selectors_disappear(driver, CHALLENGE_SELECTORS)
-
-                # all elements not found
-                break
-
-            except TimeoutException:
-                log.debug("Timeout waiting for selector")
-
-                click_verify(driver)
-
-                # update the html (cloudflare reloads the page every 5 s)
-                html_element = driver.find_element(By.TAG_NAME, "html")
-
-            # waits until cloudflare redirection ends
-        log.debug("Waiting for redirect")
-        # noinspection PyBroadException
+async def _until_match_func(tab: Tab, item, match_func, async_type=True):
+    if async_type:
+        while not await match_func(tab, item):
+            await tab.sleep(0.1)
+    else:
+        while not match_func(tab, item):
+            await tab.sleep(0.1)
+    return True
+            
+async def _wait_until_condition(tab: Tab, items, match_func, async_type=True, timeout=SHORT_TIMEOUT, message=''):
+    for item in items:
         try:
-            WebDriverWait(driver, SHORT_TIMEOUT).until(EC.staleness_of(html_element))
+            start_ts = time.time()
+            await asyncio.wait_for(_until_match_func(tab, item, match_func, async_type), timeout=timeout)
+            log.debug(f"Waiting for condition: {item} in {round(time.time() - start_ts, 1)} seconds")
+        except asyncio.TimeoutError:
+            log.debug(f"Timeout waiting for condition: {item}, {message}")
+            return False
+        except Exception as e:
+            log.error(f"Error while waiting for condition: {item}, Error: {e}")
+            return False
+    return True
+    
+async def _any_match(tab: Tab, items, match_func, async_type=True):
+    for item in items:
+        if async_type:
+            if await match_func(tab, item):
+                return item
+        else:
+            if match_func(tab, item):
+                return item
+    return None
+
+async def async_match_selectors(p:Tab, s):
+        return await p.query_selector(s) is not None
+
+async def async_match_selectors_not(p: Tab, s):
+    return await p.query_selector(s) is None
+
+async def _any_match_titles(tab: Tab, titles):
+    return await _any_match(tab, titles, lambda d, t: d.target.title.lower() == t.lower(), async_type=False)
+
+async def _any_match_selectors(tab: Tab, selectors):
+    return await _any_match(tab, selectors, async_match_selectors, async_type=True)
+
+
+async def _evil_logic(tab: Tab):
+    # wait for the page to load
+    try:
+        await asyncio.wait_for(check_document_ready(tab), SHORT_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.debug("Timeout waiting for the page")
+
+    # find access denied titles and selectors
+    if await _any_match_titles(tab, ACCESS_DENIED_TITLES) or await _any_match_selectors(tab, ACCESS_DENIED_SELECTORS):
+        raise Exception('Cloudflare has blocked this request. Probably your IP is banned for this site, check in your web browser.')
+
+    # find challenge by titles and selectors
+    challenge_found = await _any_match_titles(tab, CHALLENGE_TITLES) or await _any_match_selectors(tab, CHALLENGE_SELECTORS)
+
+    if challenge_found:
+        # wait until the title changes
+        # then wait until all the selectors disappear
+        while not (await _wait_until_condition(tab, CHALLENGE_TITLES, lambda d, t: d.target.title.lower() != t.lower(), async_type=False, message="title changes") and
+                   await _wait_until_condition(tab, CHALLENGE_SELECTORS, async_match_selectors_not, async_type=True, message="selectors disappear")):
+            log.debug("Timeout waiting for selector")
+            await click_verify(tab)
+
+        # waits until Cloudflare redirection ends
+        log.debug("Waiting for redirect")
+        try:
+            await tab
         except Exception:
             log.debug("Timeout waiting for redirect")
 
@@ -161,41 +161,14 @@ def _evil_logic(driver: WebDriver):
         log.info("Challenge not detected!")
 
 
-def click_verify(driver: WebDriver):
+async def click_verify(tab: Tab):
+    from app.helper import ChromeHelper
     try:
         log.debug("Try to find the Cloudflare verify checkbox")
-        iframe = driver.find_element(By.XPATH, "//iframe[@title='Widget containing a Cloudflare security challenge']")
-        driver.switch_to.frame(iframe)
-        checkbox = driver.find_element(
-            by=By.XPATH,
-            value='//*[@id="cf-stage"]//label[@class="ctp-checkbox-label"]/input',
-        )
-        if checkbox:
-            actions = ActionChains(driver)
-            actions.move_to_element_with_offset(checkbox, 5, 7)
-            actions.click(checkbox)
-            actions.perform()
-            log.debug("Cloudflare verify checkbox found and clicked")
+        selector = "input[type=checkbox]"
+        await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
+        log.debug("Cloudflare verify checkbox found and clicked")
     except Exception as e:
-        log.debug(f"Cloudflare verify checkbox not found on the page: {str(e)}")
-        # print(e)
-    finally:
-        driver.switch_to.default_content()
+        log.debug(f"Cloudflare verify checkbox not found: {str(e)}")
 
-    try:
-        log.debug("Try to find the Cloudflare 'Verify you are human' button")
-        button = driver.find_element(
-            by=By.XPATH,
-            value="//input[@type='button' and @value='Verify you are human']",
-        )
-        if button:
-            actions = ActionChains(driver)
-            actions.move_to_element_with_offset(button, 5, 7)
-            actions.click(button)
-            actions.perform()
-            log.debug("The Cloudflare 'Verify you are human' button found and clicked")
-    except Exception as e:
-        log.debug(f"The Cloudflare 'Verify you are human' button not found on the page：{str(e)}")
-        # print(e)
-
-    time.sleep(2)
+    await asyncio.wait_for(check_document_ready(tab), SHORT_TIMEOUT)

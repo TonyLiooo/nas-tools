@@ -13,6 +13,7 @@ from app.utils import RequestUtils, PathUtils, ExceptionUtils
 from app.utils.types import MediaType, EventType
 from config import Config, RMT_SUBEXT
 
+import asyncio
 
 class OpenSubtitles(_IPluginModule):
     # 插件名称
@@ -114,7 +115,7 @@ class OpenSubtitles(_IPluginModule):
         item_file_ext = item.get("file_ext")
 
         self.info("开始从Opensubtitle.org搜索字幕: %s，imdbid=%s" % (item_name, imdb_id))
-        subtitles = self.search_subtitles(imdb_id=imdb_id, name=item_name, year=item_year)
+        subtitles = asyncio.run(self.search_subtitles(imdb_id=imdb_id, name=item_name, year=item_year))
         if not subtitles:
             self.warn("%s 未搜索到字幕" % item_name)
         else:
@@ -182,27 +183,27 @@ class OpenSubtitles(_IPluginModule):
             else:
                 self.info("%s 共下载了 %s 个字幕" % (item_name, subtitle_count))
 
-    def search_subtitles(self, imdb_id, name, year):
+    async def search_subtitles(self, imdb_id, name, year):
         if imdb_id:
-            return self.__search_subtitles_by_imdbid(imdb_id)
+            return await self.__search_subtitles_by_imdbid(imdb_id)
         else:
-            return self.__search_subtitles_by_keyword("%s %s" % (name, year))
+            return await self.__search_subtitles_by_keyword("%s %s" % (name, year))
 
-    def __search_subtitles_by_imdbid(self, imdbid):
+    async def __search_subtitles_by_imdbid(self, imdbid):
         """
         按TMDBID搜索OpenSubtitles
         """
-        return self.__parse_opensubtitles_results(url=self._url_imdbid % str(imdbid).replace("tt", ""))
+        return await self.__parse_opensubtitles_results(url=self._url_imdbid % str(imdbid).replace("tt", ""))
 
-    def __search_subtitles_by_keyword(self, keyword):
+    async def __search_subtitles_by_keyword(self, keyword):
         """
         按关键字搜索OpenSubtitles
         """
-        return self.__parse_opensubtitles_results(url=self._url_keyword % quote(keyword))
+        return await self.__parse_opensubtitles_results(url=self._url_keyword % quote(keyword))
 
     @classmethod
     @lru_cache(maxsize=128)
-    def __parse_opensubtitles_results(cls, url):
+    async def __parse_opensubtitles_results(cls, url):
         """
         搜索并解析结果
         """
@@ -210,12 +211,13 @@ class OpenSubtitles(_IPluginModule):
         if not chrome.get_status():
             return []
         # 访问页面
-        if not chrome.visit(url):
+        if not await chrome.visit(url):
+            await chrome.quit()
             return []
         # 源码
-        html_text = chrome.get_html()
+        html_text = await chrome.get_html()
         # Cookie
-        cls._cookie = chrome.get_cookies()
+        cls._cookie = await chrome.get_cookies()
         # 解析列表
         ret_subtitles = []
         html_doc = PyQuery(html_text)
@@ -251,4 +253,5 @@ class OpenSubtitles(_IPluginModule):
                 "description": description,
                 "link": link
             })
+        await chrome.quit()
         return ret_subtitles

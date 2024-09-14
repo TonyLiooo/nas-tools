@@ -16,6 +16,8 @@ from app.utils.http_utils import RequestUtils
 from app.utils.types import MediaType
 from config import Config
 
+import asyncio
+
 
 class Torrent:
     _torrent_temp_path = None
@@ -62,8 +64,13 @@ class Torrent:
         :return: 种子保存路径，错误信息
         """
         if url.find("m-team") != -1:
+            web_url = url
             url = MteamUtils.get_mteam_torrent_url(url, ua, referer, proxy)
             if not url:
+                if MteamUtils.get_local_storage(web_url):
+                    file_path, file_conten = asyncio.run(MteamUtils.get_mteam_torrent_web(web_url, ua=ua, proxy=proxy, download_path=self._torrent_temp_path))
+                if file_path:
+                    return file_path, file_conten, ""
                 return None, url, f"mteam 种子链接获取出错，详情地址为 {url}"
             req = MteamUtils.get_mteam_torrent_req(url, ua, referer, proxy)
         else:

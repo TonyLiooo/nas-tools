@@ -51,6 +51,7 @@ from web.backend.search_torrents import search_medias_for_web, search_media_by_m
 from web.backend.pro_user import ProUser
 from web.backend.web_utils import WebUtils
 
+import asyncio
 
 class WebAction:
     _actions = {}
@@ -1099,6 +1100,7 @@ class WebAction:
         rssurl = data.get('site_rssurl')
         signurl = data.get('site_signurl')
         cookie = data.get('site_cookie')
+        local_storage = data.get('site_local_storage')
         api_key = data.get('site_api_key')
         note = data.get('site_note')
         if isinstance(note, dict):
@@ -1120,6 +1122,7 @@ class WebAction:
                                      rssurl=rssurl,
                                      signurl=signurl,
                                      cookie=cookie,
+                                     local_storage=local_storage,
                                      api_key=api_key,
                                      note=note,
                                      rss_uses=rss_uses)
@@ -1133,6 +1136,7 @@ class WebAction:
                                   rssurl=rssurl,
                                   signurl=signurl,
                                   cookie=cookie,
+                                  local_storage=local_storage,
                                   api_key=api_key,
                                   note=note,
                                   rss_uses=rss_uses)
@@ -4116,7 +4120,7 @@ class WebAction:
         """
         测试站点连通性
         """
-        flag, msg, times = Sites().test_connection(data.get("id"))
+        flag, msg, times = asyncio.run(Sites().test_connection(data.get("id")))
         code = 0 if flag else -1
         return {"code": code, "msg": msg, "time": times}
 
@@ -4538,11 +4542,11 @@ class WebAction:
                                "password": password,
                                "two_step_code": twostepcode
                            })
-        retcode, messages = SiteCookie().update_sites_cookie_ua(siteid=siteid,
+        retcode, messages = asyncio.run(SiteCookie().update_sites_cookie_ua(siteid=siteid,
                                                                 username=username,
                                                                 password=password,
                                                                 twostepcode=twostepcode,
-                                                                ocrflag=ocrflag)
+                                                                ocrflag=ocrflag))
         return {"code": retcode, "messages": messages}
 
     @staticmethod

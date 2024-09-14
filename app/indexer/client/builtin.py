@@ -19,6 +19,8 @@ from app.utils.types import SearchType, IndexerType, ProgressKey, SystemConfigKe
 from config import Config
 from web.backend.pro_user import ProUser
 
+import asyncio
+
 class BuiltinIndexer(_IIndexClient):
     # 索引器ID
     client_id = "builtin"
@@ -78,6 +80,8 @@ class BuiltinIndexer(_IIndexClient):
             return self.user.get_indexer(url=url,
                                          siteid=site.get("id"),
                                          cookie=site.get("cookie"),
+                                         local_storage=site.get("local_storage"),
+                                         api_key=site.get("api_key"),
                                          ua=site.get("ua"),
                                          name=site.get("name"),
                                          rule=site.get("rule"),
@@ -98,12 +102,16 @@ class BuiltinIndexer(_IIndexClient):
         for site in self.sites.get_sites():
             url = site.get("signurl") or site.get("rssurl")
             cookie = site.get("cookie")
-            if not url or not cookie:
+            api_key = site.get("api_key")
+            local_storage = site.get("local_storage")
+            if not url or (not cookie and not api_key and not local_storage):
                 continue
             render = False if not chrome_ok else site.get("chrome")
             indexer = self.user.get_indexer(url=url,
                                             siteid=site.get("id"),
                                             cookie=cookie,
+                                            local_storage=local_storage,
+                                            api_key=api_key,
                                             ua=site.get("ua"),
                                             name=site.get("name"),
                                             rule=site.get("rule"),
@@ -187,9 +195,9 @@ class BuiltinIndexer(_IIndexClient):
             if indexer.parser == "TNodeSpider":
                 error_flag, result_array = TNodeSpider(indexer).search(keyword=search_word)
             elif indexer.parser == "RenderSpider":
-                error_flag, result_array = RenderSpider(indexer).search(
+                error_flag, result_array = asyncio.run(RenderSpider(indexer).search(
                     keyword=search_word,
-                    mtype=match_media.type if match_media and match_media.tmdb_info else None)
+                    mtype=match_media.type if match_media and match_media.tmdb_info else None))
             elif indexer.parser == "TorrentLeech":
                 error_flag, result_array = TorrentLeech(indexer).search(keyword=search_word)
             elif indexer.parser == "MTeamSpider":
@@ -277,8 +285,8 @@ class BuiltinIndexer(_IIndexClient):
         start_time = datetime.datetime.now()
 
         if indexer.parser == "RenderSpider":
-            error_flag, result_array = RenderSpider(indexer).search(keyword=keyword,
-                                                                    page=page)
+            error_flag, result_array = asyncio.run(RenderSpider(indexer).search(keyword=keyword,
+                                                                    page=page))
         elif indexer.parser == "TNodeSpider":
             error_flag, result_array = TNodeSpider(indexer).search(keyword=keyword,
                                                                    page=page)

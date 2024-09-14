@@ -61,13 +61,14 @@ class Sites:
             site_rssurl = site.RSSURL
             site_signurl = site.SIGNURL
             site_cookie = site.COOKIE
+            site_local_storage = site.LOCALSTORAGE
             site_api_key = site.APIKEY
             site_uses = site.INCLUDE or ''
             uses = []
             if site_uses:
                 rss_enable = True if "D" in site_uses and site_rssurl else False
                 brush_enable = True if "S" in site_uses and site_rssurl and site_cookie else False
-                statistic_enable = True if "T" in site_uses and (site_rssurl or site_signurl) and site_cookie else False
+                statistic_enable = True if "T" in site_uses and (site_rssurl or site_signurl) and (site_cookie or site_local_storage or site_api_key) else False
                 uses.append("D") if rss_enable else None
                 uses.append("S") if brush_enable else None
                 uses.append("T") if statistic_enable else None
@@ -82,6 +83,7 @@ class Sites:
                 "rssurl": site_rssurl,
                 "signurl": site_signurl,
                 "cookie": site_cookie,
+                "local_storage": site_local_storage,
                 "api_key": site_api_key,
                 "rule": site_note.get("rule"),
                 "download_setting": site_note.get("download_setting"),
@@ -267,7 +269,7 @@ class Sites:
                     return site.get("tags")
         return None
 
-    def test_connection(self, site_id):
+    async def test_connection(self, site_id):
         """
         测试站点连通性
         :param site_id: 站点编号
@@ -277,6 +279,7 @@ class Sites:
         if not site_info:
             return False, "站点不存在", 0
         site_cookie = site_info.get("cookie")
+        site_local_storage = site_info.get("local_storage")
         if not site_cookie:
             return False, "未配置站点Cookie", 0
         ua = site_info.get("ua") or Config().get_ua()
@@ -292,20 +295,25 @@ class Sites:
         if site_info.get("chrome") and chrome.get_status():
             # 计时
             start_time = datetime.now()
-            if not chrome.visit(url=site_url, ua=ua, cookie=site_cookie, proxy=site_info.get("proxy")):
+            if not await chrome.visit(url=site_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, proxy=site_info.get("proxy")):
+                await chrome.quit()
                 return False, "Chrome模拟访问失败", 0
             # 循环检测是否过cf
-            cloudflare = chrome.pass_cloudflare()
+            cloudflare = await chrome.pass_cloudflare()
             seconds = int((datetime.now() - start_time).microseconds / 1000)
             if not cloudflare:
+                await chrome.quit()
                 return False, "跳转站点失败", seconds
             # 判断是否已签到
-            html_text = chrome.get_html()
+            html_text = await chrome.get_html()
             if not html_text:
+                await chrome.quit()
                 return False, "获取站点源码失败", 0
             if SiteHelper.is_logged_in(html_text):
+                await chrome.quit()
                 return True, "连接成功", seconds
             else:
+                await chrome.quit()
                 if site_url.find("m-team") != -1:
                     return self.mteam_test_connection(site_info)
                 return False, "Cookie失效", seconds
@@ -346,7 +354,7 @@ class Sites:
         return infos
 
     def add_site(self, name, site_pri,
-                 rssurl=None, signurl=None, cookie=None, api_key=None, note=None, rss_uses=None):
+                 rssurl=None, signurl=None, cookie=None, local_storage=None, api_key=None, note=None, rss_uses=None):
         """
         添加站点
         """
@@ -355,6 +363,7 @@ class Sites:
                                                rssurl=rssurl,
                                                signurl=signurl,
                                                cookie=cookie,
+                                               local_storage=local_storage,
                                                api_key=api_key,
                                                note=note,
                                                rss_uses=rss_uses)
@@ -362,7 +371,7 @@ class Sites:
         return ret
 
     def update_site(self, tid, name, site_pri,
-                    rssurl, signurl, cookie, api_key, note, rss_uses):
+                    rssurl, signurl, cookie, local_storage, api_key, note, rss_uses):
         """
         更新站点
         """
@@ -372,6 +381,7 @@ class Sites:
                                                rssurl=rssurl,
                                                signurl=signurl,
                                                cookie=cookie,
+                                               local_storage=local_storage,
                                                api_key=api_key,
                                                note=note,
                                                rss_uses=rss_uses)
@@ -393,6 +403,14 @@ class Sites:
         ret = self.dbhelper.update_site_cookie_ua(tid=siteid,
                                                   cookie=cookie,
                                                   ua=ua)
+        self.init_config()
+        return ret
+    
+    def update_site_local_storage(self, siteid, local_storage, ua=None):
+        """
+        更新站点local_storage
+        """
+        ret = self.dbhelper.update_site_local_storage(tid=siteid, local_storage=local_storage)
         self.init_config()
         return ret
 

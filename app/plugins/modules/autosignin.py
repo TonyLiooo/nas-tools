@@ -1,5 +1,4 @@
 import re
-import time
 from datetime import datetime, timedelta
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing.pool import ThreadPool
@@ -9,9 +8,6 @@ import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from lxml import etree
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as es
-from selenium.webdriver.support.wait import WebDriverWait
 
 from app.helper import ChromeHelper, SubmoduleHelper, SiteHelper
 from app.helper.cloudflare_helper import under_challenge
@@ -26,6 +22,8 @@ from config import Config
 from jinja2 import Template
 import random
 
+import asyncio
+import inspect
 
 class AutoSignIn(_IPluginModule):
     # 插件名称
@@ -634,17 +632,22 @@ class AutoSignIn(_IPluginModule):
         site_module = self.__build_class(signurl)
         home_url = StringUtils.get_base_url(signurl)
         signinTime = datetime.now(tz=pytz.timezone(Config().get_timezone())).strftime('%Y-%m-%d %H:%M:%S')
+
         if site_module and hasattr(site_module, "signin"):
             try:
-                status, msg = site_module().signin(site_info)
+                site_instance = site_module()
+                if inspect.iscoroutinefunction(site_instance.signin):
+                    status, msg = asyncio.run(site_instance.signin(site_info))
+                else:
+                    status, msg = site_instance.signin(site_info)
                 # 特殊站点直接返回签到信息，防止仿真签到、模拟登陆有歧义
                 return msg, signinTime, home_url
             except Exception as e:
                 return f"【{site_info.get('name')}】签到失败：{str(e)}", signinTime, home_url
         else:
-            return self.__signin_base(site_info), signinTime, home_url
+            return asyncio.run(self.__signin_base(site_info)), signinTime, home_url
 
-    def __signin_base(self, site_info):
+    async def __signin_base(self, site_info):
         """
         通用签到处理
         :param site_info: 站点信息
@@ -667,17 +670,20 @@ class AutoSignIn(_IPluginModule):
                 home_url = StringUtils.get_base_url(site_url)
                 if "1ptba" in home_url:
                     home_url = f"{home_url}/index.php"
-                if not chrome.visit(url=home_url, ua=ua, cookie=site_cookie, proxy=site_info.get("proxy")):
+                if not await chrome.visit(url=home_url, ua=ua, cookie=site_cookie, proxy=site_info.get("proxy")):
+                    await chrome.quit()
                     self.warn("%s 无法打开网站" % site)
                     return f"【{site}】仿真签到失败，无法打开网站！"
                 # 循环检测是否过cf
-                cloudflare = chrome.pass_cloudflare()
+                cloudflare = await chrome.pass_cloudflare()
                 if not cloudflare:
+                    await chrome.quit()
                     self.warn("%s 跳转站点失败" % site)
                     return f"【{site}】仿真签到失败，跳转站点失败！"
                 # 判断是否已签到
-                html_text = chrome.get_html()
+                html_text = await chrome.get_html()
                 if not html_text:
+                    await chrome.quit()
                     self.warn("%s 获取站点源码失败" % site)
                     return f"【{site}】仿真签到失败，获取站点源码失败！"
                 # 查找签到按钮
@@ -688,9 +694,11 @@ class AutoSignIn(_IPluginModule):
                         xpath_str = xpath
                         break
                 if re.search(r'已签|签到已得', html_text, re.IGNORECASE):
+                    await chrome.quit()
                     self.info("%s 今日已签到" % site)
                     return f"【{site}】今日已签到"
                 if not xpath_str:
+                    await chrome.quit()
                     if SiteHelper.is_logged_in(html_text):
                         self.warn("%s 未找到签到按钮，模拟登录成功" % site)
                         return f"【{site}】模拟登录成功，已签到或无需签到"
@@ -699,25 +707,28 @@ class AutoSignIn(_IPluginModule):
                         return f"【{site}】模拟登录失败！"
                 # 开始仿真
                 try:
-                    checkin_obj = WebDriverWait(driver=chrome.browser, timeout=6).until(
-                        es.element_to_be_clickable((By.XPATH, xpath_str)))
+                    checkin_obj = await chrome._tab.find(text=xpath_str, timeout=6)
                     if checkin_obj:
-                        checkin_obj.click()
+                        await checkin_obj.mouse_move()
+                        await checkin_obj.mouse_click()
                         # 检测是否过cf
-                        time.sleep(3)
-                        if under_challenge(chrome.get_html()):
-                            cloudflare = chrome.pass_cloudflare()
+                        await chrome._tab.sleep(3)
+                        if under_challenge(await chrome.get_html()):
+                            cloudflare = await chrome.pass_cloudflare()
                             if not cloudflare:
+                                await chrome.quit()
                                 self.info("%s 仿真签到失败，无法通过Cloudflare" % site)
                                 return f"【{site}】仿真签到失败，无法通过Cloudflare！"
-
                         # 判断是否已签到   [签到已得125, 补签卡: 0]
-                        if re.search(r'已签|签到已得', chrome.get_html(), re.IGNORECASE):
+                        if re.search(r'已签|签到已得', await chrome.get_html(), re.IGNORECASE):
+                            await chrome.quit()
                             return f"【{site}】签到成功"
+                        await chrome.quit()
                         self.info("%s 仿真签到成功" % site)
                         return f"【{site}】仿真签到成功"
                 except Exception as e:
                     ExceptionUtils.exception_traceback(e)
+                    await chrome.quit()
                     self.warn("%s 仿真签到失败：%s" % (site, str(e)))
                     return f"【{site}】签到失败！"
             # 模拟登录
@@ -753,6 +764,8 @@ class AutoSignIn(_IPluginModule):
                     return f"【{site}】{checkin_text}失败，无法打开网站！"
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
+            if chrome:
+                await chrome.quit()
             self.warn("%s 签到失败：%s" % (site, str(e)))
             return f"【{site}】签到失败：{str(e)}！"
 

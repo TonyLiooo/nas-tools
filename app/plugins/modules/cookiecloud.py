@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from threading import Event
 from datetime import datetime
 from jinja2 import Template
+from typing import Tuple, Dict
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -15,6 +16,9 @@ from config import Config
 from web.backend.pro_user import ProUser
 from app.indexer.indexerConf import IndexerConf
 import re
+
+import asyncio
+import json
 
 class CookieCloudRunResult:
 
@@ -342,7 +346,7 @@ class CookieCloud(_IPluginModule):
         # 将时间格式化为指定格式
         return new_time.strftime('%Y-%m-%d %H:%M:%S')
 
-    def __download_data(self) -> [dict, str, bool]:
+    def __download_data(self) -> Tuple[dict, str, bool]:
         """
         从CookieCloud下载数据
         """
@@ -354,8 +358,8 @@ class CookieCloud(_IPluginModule):
             result = ret.json()
             if not result:
                 return {}, "", True
-            if result.get("cookie_data"):
-                return result.get("cookie_data"), "", True
+            if result.get("cookie_data", {}) or result.get("local_storage_data", {}):
+                return result, "", True
             return result, "", True
         elif ret:
             return {}, "同步CookieCloud失败，错误码：%s" % ret.status_code, False
@@ -386,56 +390,72 @@ class CookieCloud(_IPluginModule):
             self._last_run_results_list.append(_result)
             return
         # 整理数据,使用domain域名的最后两级作为分组依据
-        domain_groups = defaultdict(list)
-        domain_black_list = [".".join(re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url).group("domain").split(".")[-2:]) \
+        domain_groups = defaultdict(lambda: {"cookie": [], "local_storage": ""})
+        domain_black_list = [StringUtils.get_url_domain(re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url).group("domain")) \
             for _url in re.split(",|\n|，|\t| ", self._black_list) if _url != "" and re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url)]
-        domain_white_list = [".".join(re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url).group("domain").split(".")[-2:]) \
+        domain_white_list = [StringUtils.get_url_domain(re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url).group("domain")) \
             for _url in re.split(",|\n|，|\t| ", self._white_list) if _url != "" and re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url)]
-        for site, cookies in contents.items():
-            for cookie in cookies:
-                domain_parts = cookie["domain"].split(".")[-2:]
-                if self._synchronousMode and self._synchronousMode == "black_mode" and ".".join(domain_parts) in domain_black_list:
+        cookie_items = contents.get("cookie_data", {})
+        local_storage_items = contents.get("local_storage_data", "")
+        if cookie_items:
+            for site, cookies in cookie_items.items():
+                for cookie in cookies:
+                    domain_key = StringUtils.get_url_domain(cookie["domain"])
+                    if self._synchronousMode and self._synchronousMode == "black_mode" and domain_key in domain_black_list:
+                        continue
+                    elif self._synchronousMode and self._synchronousMode == "white_mode" and domain_key not in domain_white_list:
+                        continue
+                    domain_groups[domain_key]["cookie"].append(cookie)
+        if local_storage_items:
+            for site, local_storage in local_storage_items.items():
+                domain_key = StringUtils.get_url_domain(site)
+                if self._synchronousMode and self._synchronousMode == "black_mode" and domain_key in domain_black_list:
                     continue
-                elif self._synchronousMode and self._synchronousMode == "white_mode" and ".".join(domain_parts) not in domain_white_list:
+                elif self._synchronousMode and self._synchronousMode == "white_mode" and domain_key not in domain_white_list:
                     continue
-                domain_key = tuple(domain_parts)
-                domain_groups[domain_key].append(cookie)
+                domain_groups[domain_key]["local_storage"] = json.dumps(local_storage)
         # 计数
         update_count = 0
         add_count = 0
         # 索引器
-        for domain, content_list in domain_groups.items():
+        for domain_url, content_list in domain_groups.items():
             if self._event.is_set():
                 self.info(f"同步服务停止")
                 _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
                 self._last_run_results_list.append(_result)
                 return
-            if not content_list:
+            if content_list["cookie"]:
+                # 只有cf的cookie过滤掉
+                cloudflare_cookie = True
+                for content in content_list["cookie"]:
+                    if content["name"] != "cf_clearance":
+                        cloudflare_cookie = False
+                        break
+                if cloudflare_cookie:
+                    cookie_str = None
+                else:
+                    # Cookie
+                    cookie_str = ";".join(
+                        [f"{content.get('name')}={content.get('value')}"
+                        for content in content_list["cookie"]
+                        if content.get("name") and content.get("name") not in self._ignore_cookies]
+                    )
+            else:
+                cookie_str = None
+            local_storage = content_list["local_storage"]
+            if not cookie_str and not local_storage:
                 continue
-            # 域名
-            domain_url = ".".join(domain)
-            # 只有cf的cookie过滤掉
-            cloudflare_cookie = True
-            for content in content_list:
-                if content["name"] != "cf_clearance":
-                    cloudflare_cookie = False
-                    break
-            if cloudflare_cookie:
-                continue
-            # Cookie
-            cookie_str = ";".join(
-                [f"{content.get('name')}={content.get('value')}"
-                 for content in content_list
-                 if content.get("name") and content.get("name") not in self._ignore_cookies]
-            )
             # 查询站点
-            site_info = self.sites.get_sites_by_suffix(domain_url)
+            site_info = self.sites.get_sites_by_url_domain(domain_url)
             if site_info:
                 # 检查站点连通性
-                success, _, _ = self.sites.test_connection(site_id=site_info.get("id"))
-                if not success:
+                _, success, _ = asyncio.run(self.sites.test_connection(site_id=site_info.get("id")))
+                if success in ["Cookie失效", "未配置站点Cookie"]:
                     # 已存在且连通失败的站点更新Cookie
-                    self.sites.update_site_cookie(siteid=site_info.get("id"), cookie=cookie_str)
+                    if cookie_str:
+                        self.sites.update_site_cookie(siteid=site_info.get("id"), cookie=cookie_str)
+                    if local_storage:
+                        self.sites.update_site_local_storage(siteid=site_info.get("id"), local_storage=local_storage)
                     update_count += 1
             else:
                 # 查询是否在索引器范围
@@ -451,6 +471,7 @@ class CookieCloud(_IPluginModule):
                         site_pri=site_pri,
                         signurl=indexer_info.get("domain"),
                         cookie=cookie_str,
+                        local_storage=local_storage,
                         rss_uses='T'
                     )
                     add_count += 1
