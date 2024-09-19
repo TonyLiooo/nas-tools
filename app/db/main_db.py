@@ -1,6 +1,6 @@
 import os
 import threading
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.pool import QueuePool
 
@@ -40,8 +40,9 @@ class MainDb:
         初始化数据库版本
         """
         try:
-            self.excute("delete from alembic_version where 1")
-            self.commit()
+            if self.table_exists("alembic_version"):
+                self.excute("delete from alembic_version where 1")
+                self.commit()
         except Exception as err:
             print(str(err))
 
@@ -78,6 +79,13 @@ class MainDb:
             self.session.add_all(data)
         else:
             self.session.add(data)
+
+    def table_exists(self, table_name):
+        """
+        检查指定的表是否存在
+        """
+        inspector = inspect(_Engine)
+        return inspector.has_table(table_name)
 
     def query(self, *obj):
         """
