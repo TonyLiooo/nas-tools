@@ -106,7 +106,11 @@ class SystemUtils:
         if SystemUtils.is_lite_version():
             return None
         else:
-            return WEBDRIVER_PATH.get(SystemUtils.get_system().value)
+            webdriver_path = WEBDRIVER_PATH.get(SystemUtils.get_system().value)
+            if webdriver_path and os.path.exists(webdriver_path):
+                return webdriver_path
+            else:
+                return None
 
     @staticmethod
     def chmod755(filePath):

@@ -68,11 +68,11 @@ KEYWORD_BLACKLIST = ['中字', '韩语', '双字', '中英', '日语', '双语',
                      'www66ystv',
                      '人人影视制作', '英语', 'www6vhaotv', '无删减版', '完成版', '德意']
 
-# WebDriver路径
+# WebDriver路径(chromium路径)
 WEBDRIVER_PATH = {
-    "Docker": "/usr/lib/chromium/chromedriver",
-    "Synology": "/var/packages/NASTool/target/bin/chromedriver",
-    "MacOS": "/usr/local/bin/chromedriver"
+    "Docker": "/usr/lib/chromium",
+    "Synology": "/var/packages/NASTool/target/bin/chromium",
+    "MacOS": "/Applications/Chromium.app/Contents/MacOS/Chromium"
 }
 
 # Xvfb虚拟显示路程
