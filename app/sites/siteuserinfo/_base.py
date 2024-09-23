@@ -264,6 +264,7 @@ class _ISiteUserInfo(metaclass=ABCMeta):
                         log.error(f"【Sites】{self.site_name} 跳转站点失败")
                         return ""
                     await SiteHelper.wait_for_logged_in(chrome._tab)
+                    await chrome._tab.sleep(1)
                     return await chrome.get_html()
                 else:
                     log.warn(

@@ -106,101 +106,90 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         seeding_seeders = []
         seeding_leechers = []
 
-        user_levels_text = html.xpath('//tr/td[text()="等級" or text()="等级"]/following-sibling::td[1]/img[1]/@title')
-        if user_levels_text:
-            self.user_level = user_levels_text[0].strip()
-
-        if not self.bonus:
-            bonus_text = html.xpath('//tr/td[text()="魔力值" or text()="猫粮"]/following-sibling::td[1]/text()')
-            if bonus_text:
-                self.bonus = StringUtils.str_float(bonus_text[0].strip())
-
-        # 加入日期
-        join_at_text = html.xpath(
-            '//tr/td[text()="加入日期" or text()="注册日期" or *[text()="加入日期"]]/following-sibling::td[1]//text()'
-            '|//div/b[text()="加入日期"]/../text()|//span[text()="加入日期："]/following-sibling::span[1]/text()')
-        if join_at_text:
-            self.join_at = StringUtils.unify_datetime_str(join_at_text[0].split(' (')[0].strip())
-
         if self.chrome and self.chrome._tab:
-            seeding_obj = await self.chrome._tab.find('//tr/td[text()="目前做種"]/following-sibling::td/button')
-            await seeding_obj.click()
-            await self.chrome._tab.wait_for(text='//tbody[@class="ant-table-tbody"]/tr[not(./td//div[contains(text(), "無此資料")])]', timeout=6)
+            try:
+                await self.chrome.wait_until_element_state(tab=self.chrome._tab,text="目前做種", should_appear=True, timeout=20)
+                seeding_obj = await self.chrome._tab.find('//tr/td[text()="目前做種"]/following-sibling::td/button')
+                await seeding_obj.click()
+                await self.chrome._tab.wait_for(text='//tbody[@class="ant-table-tbody"]/tr[not(./td//div[contains(text(), "無此資料")])]', timeout=6)
 
-            while True:
-                await self.chrome.wait_until_element_state(tab=self.chrome._tab,text="//div[@id='float-btns']//button//span[@role='img' and contains(@class, 'anticon-loading') and @aria-label='loading']", should_appear=False, timeout=20)
-                html_text = await self.chrome.get_html()
-                soup = BeautifulSoup(html_text, 'lxml')
-                tbody = soup.find('tbody', class_='ant-table-tbody')
-                if tbody:
-                    # Find all rows in the table body
-                    rows = tbody.find_all('tr')
-                    # Extract data from each row
-                    for row in rows:
-                        cells = row.find_all('td')
+                while True:
+                    await self.chrome.wait_until_element_state(tab=self.chrome._tab,text="//div[@id='float-btns']//button//span[@role='img' and contains(@class, 'anticon-loading') and @aria-label='loading']", should_appear=False, timeout=20)
+                    html_text = await self.chrome.get_html()
+                    html = etree.HTML(html_text)
+                    soup = BeautifulSoup(html_text, 'lxml')
+                    tbody = soup.find('tbody', class_='ant-table-tbody')
+                    if tbody:
+                        # Find all rows in the table body
+                        rows = tbody.find_all('tr')
+                        # Extract data from each row
+                        for row in rows:
+                            cells = row.find_all('td')
 
-                        # Initialize variables with default values
-                        category = title = description = size = seeders = leechers = upload = download = completed = 'N/A'
+                            # Initialize variables with default values
+                            category = title = description = size = seeders = leechers = upload = download = completed = 'N/A'
 
-                        if len(cells) > 0:
-                            # Extract data from each cell
-                            category_img = cells[0].find('img')
-                            if category_img:
-                                category = category_img.get('alt', 'N/A')
+                            if len(cells) > 0:
+                                # Extract data from each cell
+                                category_img = cells[0].find('img')
+                                if category_img:
+                                    category = category_img.get('alt', 'N/A')
 
-                        if len(cells) > 1:
-                            title_strong = cells[1].find('strong')
-                            if title_strong:
-                                title = title_strong.text
+                            if len(cells) > 1:
+                                title_strong = cells[1].find('strong')
+                                if title_strong:
+                                    title = title_strong.text
 
-                            description_spans = cells[1].find_all('span', class_='ant-typography-ellipsis')
-                            if len(description_spans) > 1:
-                                description = description_spans[1].text
+                                description_spans = cells[1].find_all('span', class_='ant-typography-ellipsis')
+                                if len(description_spans) > 1:
+                                    description = description_spans[1].text
 
-                        if len(cells) > 2:
-                            size = cells[2].text.strip()
+                            if len(cells) > 2:
+                                size = cells[2].text.strip()
 
-                        if len(cells) > 3:
-                            seeders_spans = cells[3].find_all('span')
-                            if len(seeders_spans) > 1:
-                                seeders = seeders_spans[1].text
-                            if len(seeders_spans) > 3:
-                                leechers = seeders_spans[-1].text
+                            if len(cells) > 3:
+                                seeders_spans = cells[3].find_all('span')
+                                if len(seeders_spans) > 1:
+                                    seeders = seeders_spans[1].text
+                                if len(seeders_spans) > 3:
+                                    leechers = seeders_spans[-1].text
 
-                        if len(cells) > 4:
-                            upload = cells[4].text.strip()
+                            if len(cells) > 4:
+                                upload = cells[4].text.strip()
 
-                        if len(cells) > 5:
-                            download = cells[5].text.strip()
+                            if len(cells) > 5:
+                                download = cells[5].text.strip()
 
-                        if len(cells) > 6:
-                            completed = cells[6].text.strip()
+                            if len(cells) > 6:
+                                completed = cells[6].text.strip()
 
-                        # Print the extracted data
-                        # print(f'Category: {category}')
-                        # print(f'Title: {title}')
-                        # print(f'Description: {description}')
-                        # print(f'Size: {size}')
-                        # print(f'Seeders: {seeders}')
-                        # print(f'Leechers: {leechers}')
-                        # print(f'Upload: {upload}')
-                        # print(f'Download: {download}')
-                        # print(f'Completed: {completed}')
-                        # print('---')
-                        if size != 'N/A' and seeders !='N/A' and leechers!='N/A':
-                            seeding_sizes.append(size)
-                            seeding_seeders.append(seeders)
-                            seeding_leechers.append(leechers)
-                else:
-                    log.debug('No tbody element found with the class "ant-table-tbody".')
+                            # Print the extracted data
+                            # print(f'Category: {category}')
+                            # print(f'Title: {title}')
+                            # print(f'Description: {description}')
+                            # print(f'Size: {size}')
+                            # print(f'Seeders: {seeders}')
+                            # print(f'Leechers: {leechers}')
+                            # print(f'Upload: {upload}')
+                            # print(f'Download: {download}')
+                            # print(f'Completed: {completed}')
+                            # print('---')
+                            if size != 'N/A' and seeders !='N/A' and leechers!='N/A':
+                                seeding_sizes.append(size)
+                                seeding_seeders.append(seeders)
+                                seeding_leechers.append(leechers)
+                    else:
+                        log.debug('No tbody element found with the class "ant-table-tbody".')
 
-                pagination_next = soup.find('li', class_='ant-pagination-next')
-                next_obj = await self.chrome._tab.find('//li[@title="下一頁" and contains(@class, "ant-pagination-next")]/button')
-                # Extract the aria-disabled attribute
-                if pagination_next and pagination_next.get('aria-disabled', 'false')=='false' and next_obj:
-                    await next_obj.click()
-                else:
-                    break
+                    pagination_next = soup.find('li', class_='ant-pagination-next')
+                    next_obj = await self.chrome._tab.find('//li[@title="下一頁" and contains(@class, "ant-pagination-next")]/button')
+                    # Extract the aria-disabled attribute
+                    if pagination_next and pagination_next.get('aria-disabled', 'false')=='false' and next_obj:
+                        await next_obj.click()
+                    else:
+                        break
+            except Exception as err:
+                log.error(str(err))
 
         # 做种体积 & 做种数
         tmp_seeding = len(seeding_sizes)
@@ -220,6 +209,22 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         if not self.seeding_info:
             self.seeding_info = tmp_seeding_info
         self.seeding_info = json.dumps(self.seeding_info)
+
+        user_levels_text = html.xpath('//tr/td[text()="等級" or text()="等级"]/following-sibling::td[1]/img[1]/@title')
+        if user_levels_text:
+            self.user_level = user_levels_text[0].strip()
+
+        if not self.bonus:
+            bonus_text = html.xpath('//tr/td[text()="魔力值" or text()="猫粮"]/following-sibling::td[1]/text()')
+            if bonus_text:
+                self.bonus = StringUtils.str_float(bonus_text[0].strip())
+
+        # 加入日期
+        join_at_text = html.xpath(
+            '//tr/td[text()="加入日期" or text()="注册日期" or *[text()="加入日期"]]/following-sibling::td[1]//text()'
+            '|//div/b[text()="加入日期"]/../text()|//span[text()="加入日期："]/following-sibling::span[1]/text()')
+        if join_at_text:
+            self.join_at = StringUtils.unify_datetime_str(join_at_text[0].split(' (')[0].strip())
 
     async def _parse_message_unread_links(self, html_text, msg_links):
         html = etree.HTML(html_text)
