@@ -231,7 +231,7 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         if not html:
             return
         
-        message_links = html.xpath('//a[contains(@href, "/message/read?id=")]/@href')
+        message_links = html.xpath('//a[contains(@href, "/message/read?id=") and ./following-sibling::sup]/@href')
         if message_links:
             msg_links.extend(message_links)
         
@@ -450,6 +450,7 @@ class MteamSiteUserInfo(_ISiteUserInfo):
             await self._pase_unread_msgs()
             if self._user_detail_page:
                 await self._parse_user_detail_info(await self._get_page_content(urljoin(self._base_url, self._user_detail_page)))
-            
+        else:
+            self.seeding_info = ''   
 
 

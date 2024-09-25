@@ -128,7 +128,7 @@ class ChromeHelper(object):
     
     @staticmethod
     async def check_document_ready(tab:Tab):
-        while await tab.evaluate('document.readyState') != 'complete':
+        while await tab.evaluate('document.readyState') == 'loading':
             await tab.sleep(1)
         return True
     
@@ -364,7 +364,7 @@ class ChromeHelper(object):
         chrome = await nd.Browser.create(config=options)
         return chrome
 
-    async def visit(self, url, ua=None, cookie=None, local_storage=None, timeout=60, proxy=None, new_tab=False):
+    async def visit(self, url, ua=None, cookie=None, local_storage=None, timeout=30, proxy=None, new_tab=False):
         self._proxy = proxy
         if not await self.browser:
             return False

@@ -19,9 +19,6 @@ from config import Config
 import asyncio
 import inspect
 
-lock = Lock()
-
-
 @singleton
 class SiteUserInfo(object):
     sites = None
@@ -33,7 +30,9 @@ class SiteUserInfo(object):
     _sites_data = {}
 
     def __init__(self):
-
+        self.is_updating = False
+        self.lock_site = Lock()
+        self.lock = Lock()
         # 加载模块
         self._site_schema = SubmoduleHelper.import_submodules('app.sites.siteuserinfo',
                                                               filter_func=lambda _, obj: hasattr(obj, 'schema'))
@@ -192,7 +191,8 @@ class SiteUserInfo(object):
                         site_url = site_url.rstrip("/") + f"/userdetails.php?id={matches[0]}"
                 except requests.exceptions.RequestException as e:
                     pass
-
+        
+        site_user_info = None
         try:
             site_user_info = await self.build(url=site_url,
                                         site_id=site_id,
@@ -214,7 +214,8 @@ class SiteUserInfo(object):
 
                 # 获取不到数据时，仅返回错误信息，不做历史数据更新
                 if site_user_info.err_msg:
-                    self._sites_data.update({site_name: {"err_msg": site_user_info.err_msg}})
+                    with self.lock_site:
+                        self._sites_data.update({site_name: {"err_msg": site_user_info.err_msg}})
                     await site_user_info.chrome.quit()
                     return
 
@@ -241,16 +242,17 @@ class SiteUserInfo(object):
 
                 _updated_sites_json = json.dumps(_updated_sites_data, indent=4)
                 log.debug(f"【Sites】站点 {site_name} 数据：{_updated_sites_json}")
-
-                self._sites_data.update(_updated_sites_data)
+                with self.lock_site:
+                    self._sites_data.update(_updated_sites_data)
                 await site_user_info.chrome.quit()
                 return site_user_info
 
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
             log.error(f"【Sites】站点 {site_name} 获取流量数据失败：{str(e)}")
-        
-        await site_user_info.chrome.quit()
+        finally:
+            if site_user_info and site_user_info.chrome:
+                await site_user_info.chrome.quit()
 
     def __notify_unread_msg(self, site_name, site_user_info, unread_msg_notify):
         if site_user_info.message_unread <= 0:
@@ -321,49 +323,57 @@ class SiteUserInfo(object):
         if not self.sites.get_sites():
             return
 
-        with lock:
+        if not force \
+                and not specify_sites \
+                and self._last_update_time:
+            return
 
-            if not force \
-                    and not specify_sites \
-                    and self._last_update_time:
+        if specify_sites \
+                and not isinstance(specify_sites, list):
+            specify_sites = [specify_sites]
+
+        # 没有指定站点，默认使用全部站点
+        if not specify_sites:
+            refresh_sites = self.sites.get_sites(statistic=True)
+        else:
+            refresh_sites = [site for site in self.sites.get_sites(statistic=True) if
+                                site.get("name") in specify_sites]
+
+        if not refresh_sites:
+            return
+        
+        with self.lock:
+            if self.is_updating:
                 return
+            self.is_updating = True
 
-            if specify_sites \
-                    and not isinstance(specify_sites, list):
-                specify_sites = [specify_sites]
+        site_user_infos = []
+        try:
+            with ThreadPool(min(len(refresh_sites), self._MAX_CONCURRENCY)) as pool:
+                results = pool.map(lambda site: asyncio.run(self.__refresh_site_data(site)), refresh_sites)
 
-            # 没有指定站点，默认使用全部站点
-            if not specify_sites:
-                refresh_sites = self.sites.get_sites(statistic=True)
-            else:
-                refresh_sites = [site for site in self.sites.get_sites(statistic=True) if
-                                 site.get("name") in specify_sites]
+                site_user_infos = [result for result in results if result]
+                site_user_infos = [info for info in site_user_infos if info is not None]
+        except Exception as e:
+            log.error(f"An error occurred: {e}")
+        finally:
+            # 重置状态
+            with self.lock:
+                self.is_updating = False
 
-            if not refresh_sites:
-                return
+        # 登记历史数据
+        self.dbhelper.insert_site_statistics_history(site_user_infos)
+        # 实时用户数据
+        self.dbhelper.update_site_user_statistics(site_user_infos)
+        # 更新站点图标
+        self.dbhelper.update_site_favicon(site_user_infos)
+        # 实时做种信息
+        self.dbhelper.update_site_seed_info(site_user_infos)
+        # 站点图标重新加载
+        self.sites.init_favicons()
 
-            try:
-                with ThreadPool(min(len(refresh_sites), self._MAX_CONCURRENCY)) as pool:
-                    results = pool.map(lambda site: asyncio.run(self.__refresh_site_data(site)), refresh_sites)
-
-                    site_user_infos = [result for result in results if result]
-                    site_user_infos = [info for info in site_user_infos if info is not None]
-            except Exception as e:
-                log.error(f"An error occurred: {e}")
-
-            # 登记历史数据
-            self.dbhelper.insert_site_statistics_history(site_user_infos)
-            # 实时用户数据
-            self.dbhelper.update_site_user_statistics(site_user_infos)
-            # 更新站点图标
-            self.dbhelper.update_site_favicon(site_user_infos)
-            # 实时做种信息
-            self.dbhelper.update_site_seed_info(site_user_infos)
-            # 站点图标重新加载
-            self.sites.init_favicons()
-
-            # 更新时间
-            self._last_update_time = datetime.now()
+        # 更新时间
+        self._last_update_time = datetime.now()
 
     def get_pt_site_statistics_history(self, days=7, end_day=None):
         """

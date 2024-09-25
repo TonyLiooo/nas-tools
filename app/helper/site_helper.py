@@ -40,7 +40,9 @@ class SiteHelper:
         user_info_div = html.xpath('//div[@class="user-info-side"]')
         if user_info_div:
             return True
-
+        seedersList = html.xpath('//tr[td[img[@class="size"]] and td[img[@class="seeders"]] and td[img[@class="leechers"]]]')
+        if seedersList:
+            return True
         return False
     
     @staticmethod
