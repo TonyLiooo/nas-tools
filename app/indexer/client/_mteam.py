@@ -131,7 +131,10 @@ class MTeamSpider(object):
         if not cloudflare:
             return True, []
         # 等待页面加载完成
-        await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
+        try:
+            await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
+        except:
+            pass
         torrents = []
         while True:
             await chrome.wait_until_element_state(tab=chrome._tab,text="//div[@id='float-btns']//button//span[@role='img' and contains(@class, 'anticon-loading') and @aria-label='loading']", should_appear=False, timeout=20)

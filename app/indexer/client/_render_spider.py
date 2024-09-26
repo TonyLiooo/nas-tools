@@ -112,7 +112,10 @@ class RenderSpider(object):
                 await chrome.quit()
                 return True, []
         # 等待页面加载完成
-        await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
+        try:
+            await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
+        except:
+            pass
         # 获取HTML文本
         html_text = await chrome.get_html()
         if not html_text:

@@ -18,6 +18,7 @@ from config import Config
 
 import asyncio
 import inspect
+import time
 
 @singleton
 class SiteUserInfo(object):
@@ -344,6 +345,8 @@ class SiteUserInfo(object):
         
         with self.lock:
             if self.is_updating:
+                while self.is_updating:
+                    time.sleep(3)
                 return
             self.is_updating = True
 
