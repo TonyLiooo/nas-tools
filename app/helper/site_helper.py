@@ -46,7 +46,7 @@ class SiteHelper:
         return False
     
     @staticmethod
-    async def wait_for_logged_in(tab:Tab, timeout=15):
+    async def wait_for_logged_in(tab:Tab, timeout=30):
         """
         等待页面登录完成
         :param tab: nodriver tab对象

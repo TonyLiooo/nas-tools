@@ -380,6 +380,7 @@ class ChromeHelper(object):
             else:
                 self._tab = await self._chrome.get(url)
             if local_storage:
+                await self._tab
                 await self._tab.wait_for(text="html",timeout=timeout)
                 await self.set_local_storage(local_storage)
                 await self._tab.get(url)
@@ -387,6 +388,8 @@ class ChromeHelper(object):
             return True
         except asyncio.TimeoutError:
             log.debug("Timeout: Page did not complete loading within the timeout period.")
+            if await self._tab.find(text="html"):
+                return True
             return False
         except Exception as err:
             log.error(str(err))

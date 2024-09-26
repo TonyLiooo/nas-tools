@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from multiprocessing.dummy import Pool as ThreadPool
-from threading import Lock
+from threading import Lock, Condition
 import re
 import json
 from urllib.parse import urlparse, urlunparse
@@ -18,7 +18,6 @@ from config import Config
 
 import asyncio
 import inspect
-import time
 
 @singleton
 class SiteUserInfo(object):
@@ -33,7 +32,7 @@ class SiteUserInfo(object):
     def __init__(self):
         self.is_updating = False
         self.lock_site = Lock()
-        self.lock = Lock()
+        self.lock = Condition()
         # 加载模块
         self._site_schema = SubmoduleHelper.import_submodules('app.sites.siteuserinfo',
                                                               filter_func=lambda _, obj: hasattr(obj, 'schema'))
@@ -346,7 +345,7 @@ class SiteUserInfo(object):
         with self.lock:
             if self.is_updating:
                 while self.is_updating:
-                    time.sleep(3)
+                    self.lock.wait()
                 return
             self.is_updating = True
 
@@ -363,6 +362,7 @@ class SiteUserInfo(object):
             # 重置状态
             with self.lock:
                 self.is_updating = False
+                self.lock.notify_all()
 
         # 登记历史数据
         self.dbhelper.insert_site_statistics_history(site_user_infos)
