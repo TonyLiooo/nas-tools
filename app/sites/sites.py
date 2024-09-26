@@ -280,8 +280,9 @@ class Sites:
             return False, "站点不存在", 0
         site_cookie = site_info.get("cookie")
         site_local_storage = site_info.get("local_storage")
-        if not site_cookie:
-            return False, "未配置站点Cookie", 0
+        site_api_key = site_info.get("api_key")
+        if not site_cookie and not site_local_storage and not site_api_key:
+            return False, "未配置站点Cookie或local storage或api key", 0
         ua = site_info.get("ua") or Config().get_ua()
         site_url = StringUtils.get_base_url(site_info.get("signurl") or site_info.get("rssurl"))
         if not site_url:
@@ -309,7 +310,7 @@ class Sites:
             if not html_text:
                 await chrome.quit()
                 return False, "获取站点源码失败", 0
-            if SiteHelper.is_logged_in(html_text):
+            if await SiteHelper.wait_for_logged_in(chrome._tab):
                 await chrome.quit()
                 return True, "连接成功", seconds
             else:

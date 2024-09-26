@@ -77,7 +77,7 @@ def under_challenge(html_text: str):
 
 @staticmethod
 async def check_document_ready(tab:Tab):
-    while await tab.evaluate('document.readyState') != 'complete':
+    while await tab.evaluate('document.readyState') == 'loading':
         await tab.sleep(1)
     return True
 
@@ -130,7 +130,7 @@ async def _any_match_selectors(tab: Tab, selectors):
 async def _evil_logic(tab: Tab):
     # wait for the page to load
     try:
-        await asyncio.wait_for(check_document_ready(tab), SHORT_TIMEOUT)
+        await asyncio.wait_for(check_document_ready(tab), 20)
     except asyncio.TimeoutError:
         log.debug("Timeout waiting for the page")
 
@@ -171,4 +171,7 @@ async def click_verify(tab: Tab):
     except Exception as e:
         log.debug(f"Cloudflare verify checkbox not found: {str(e)}")
 
-    await asyncio.wait_for(check_document_ready(tab), SHORT_TIMEOUT)
+    try:
+        await asyncio.wait_for(check_document_ready(tab), 20)
+    except asyncio.TimeoutError:
+        log.debug("Timeout waiting for the page")
