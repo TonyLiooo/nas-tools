@@ -2,22 +2,20 @@ import regex as re
 import cn2an
 
 from app.helper.db_helper import DbHelper
-from app.utils.commons import singleton
 from app.utils.exception_utils import ExceptionUtils
+from typing import Tuple
 
-
-@singleton
 class WordsHelper:
     dbhelper = None
     # 识别词
     words_info = []
 
-    def __init__(self):
-        self.init_config()
+    def __init__(self, gid=None):
+        self.init_config(gid=gid)
 
-    def init_config(self):
+    def init_config(self, gid=None):
         self.dbhelper = DbHelper()
-        self.words_info = self.dbhelper.get_custom_words(enabled=1)
+        self.words_info = self.dbhelper.get_custom_words(gid=gid, enabled=1)
 
     def process(self, title):
         # 错误信息
@@ -91,7 +89,7 @@ class WordsHelper:
         return title, msg, {"ignored": used_ignored_words, "replaced": used_replaced_words, "offset": used_offset_words}
 
     @staticmethod
-    def replace_regex(title, replaced, replace) -> (str, str, bool):
+    def replace_regex(title, replaced, replace) -> Tuple[str, str, bool]:
         try:
             if not re.findall(r'%s' % replaced, title):
                 return title, "", False
@@ -102,7 +100,7 @@ class WordsHelper:
             return title, str(err), False
 
     @staticmethod
-    def replace_noregex(title, replaced, replace) -> (str, str, bool):
+    def replace_noregex(title, replaced, replace) -> Tuple[str, str, bool]:
         try:
             if title.find(replaced) == -1:
                 return title, "", False
@@ -113,7 +111,7 @@ class WordsHelper:
             return title, str(err), False
 
     @staticmethod
-    def episode_offset(title, front, back, offset) -> (str, str, bool):
+    def episode_offset(title, front, back, offset) -> Tuple[str, str, bool]:
         try:
             if back and not re.findall(r'%s' % back, title):
                 return title, "", False
