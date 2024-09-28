@@ -3,7 +3,7 @@ import asyncio
 import psutil
 import re
 import nodriver as nd
-from nodriver import Tab
+from nodriver import Tab, Element
 from nodriver.core.config import find_chrome_executable
 from urllib.parse import urlparse
 
@@ -17,6 +17,29 @@ import json
 
 driver_executable_path = None
 
+sub_regexes = {
+    "tag": "([a-zA-Z][a-zA-Z0-9]{0,10}|\*)",
+    "attribute": "[.a-zA-Z_:][-\w:.]*(\(\))?)",
+    "value": "\s*[\w/:][-/\w\s,:;.]*"
+}
+
+validation_re = (
+    "(?P<node>"
+      "("
+        "^id\([\"\']?(?P<idvalue>%(value)s)[\"\']?\)" # special case! id(idValue)
+      "|"
+        "(?P<nav>//?)(?P<tag>%(tag)s)" # //div
+        "(\[("
+          "(?P<matched>(?P<mattr>@?%(attribute)s=[\"\'](?P<mvalue>%(value)s))[\"\']" # [@id="bleh"] and [text()="meh"]
+        "|"
+          "(?P<contained>contains\((?P<cattr>@?%(attribute)s,\s*[\"\'](?P<cvalue>%(value)s)[\"\']\))" # [contains(text(), "bleh")] or [contains(@id, "bleh")]
+        ")\])?"
+        "(\[(?P<nth>\d+)\])?"
+      ")"
+    ")" % sub_regexes
+)
+
+prog = re.compile(validation_re)
 
 class ChromeHelper(object):
     _executable_path = None
@@ -144,39 +167,63 @@ class ChromeHelper(object):
             str: The equivalent CSS selector.
         """
     
-        # Convert XPath axis and node tests to CSS selectors
-        css = xpath
-        
-        # Convert predicate expressions (e.g., [1], [@attr='value']) to CSS attribute selectors
-        css = re.sub(r'\[@([^\]]+)=["\']([^"\']+)["\']\]', r'[\1="\2"]', css)
-        
-        # Convert XPath predicates (e.g., [1]) to nth-child CSS selectors
-        css = re.sub(r'\[(\d+)\]', r':nth-child(\1)', css)
-        
-        # Remove the XPath axis from the beginning of the XPath expression
-        css = re.sub(r'^//', '', css)
-        
-        # Replace double slashes with a single slash (XPath to CSS path)
-        css = re.sub(r'//', ' ', css)
-        
-        # Remove unnecessary leading and trailing spaces
-        css = css.strip()
+        css = ""
+        position = 0
 
-        # Ensure CSS selector is properly formatted
-        css = re.sub(r'(\s+)', ' ', css)  # Replace multiple spaces with a single space
+        while position < len(xpath):
+            node = prog.match(xpath[position:])
+            if node is None:
+                raise "Invalid or unsupported Xpath: %s" % xpath
+            # log.debug("node found: %s" % node)
+            match = node.groupdict()
+            # log.debug("broke node down to: %s" % match)
 
-        # Clean up any residual syntax errors or unnecessary parts
-        css = css.replace('[1]', '')
+            nav = " " if match['nav'] == "//" else " > " if position != 0 else ""
+            tag = "" if match['tag'] == "*" else match['tag'] or ""
 
-        # Replace common XPath functions and expressions
-        css = re.sub(r'\[contains\(@class,["\']([^"\']+)["\']\)\]', r'.\1', css)
-        css = re.sub(r'\[contains\(@id,["\']([^"\']+)["\']\)\]', r'#\1', css)
-        css = re.sub(r'\[contains\(@name,["\']([^"\']+)["\']\)\]', r'[name="\1"]', css)
-        css = re.sub(r'\[@id=["\']([^"\']+)["\']\]', r'#\1', css)
-        css = re.sub(r'\[@class=["\']([^"\']+)["\']\]', r'.\1', css)
+            if match['idvalue']:
+                attr = "#%s" % match['idvalue'].replace(" ", "#")
+            elif match['matched']:
+                if match['mattr'] == "@id":
+                    attr = "#%s" % match['mvalue'].replace(" ", "#")
+                elif match['mattr'] == "@class":
+                    attr = ".%s" % match['mvalue'].replace(" ", ".")
+                elif match['mattr'] in ["text()", "."]:
+                    attr = ":contains(^%s$)" % match['mvalue']
+                elif match['mattr']:
+                    if match["mvalue"].find(" ") != -1:
+                        match["mvalue"] = "\"%s\"" % match["mvalue"]
+                    attr = "[%s=%s]" % (match['mattr'].replace("@", ""), match['mvalue'])
+            elif match['contained']:
+                if match['cattr'].startswith("@"):
+                    attr = "[%s*=%s]" % (match['cattr'].replace("@", ""), match['cvalue'])
+                elif match['cattr'] == "text()":
+                    attr = ":contains(%s)" % match['cvalue']
+            else:
+                attr = ""
+                
+            nth = ":nth-of-type(%s)" % match['nth'] if match['nth'] else ""
+            node_css = nav + tag + attr + nth
+            # log.debug("final node css: %s" % node_css)
+            css += node_css
+            position += node.end()
+            
+        return css.strip() 
 
-        return css
-
+    async def is_clickable(self, element:Element):
+        """
+        checks if the element is clickable
+        
+        checks if the element is displayed and enabled
+        :return: True if the element is clickable, False otherwise.
+        :rtype: bool
+        """
+        box_model = await self._tab.send(nd.cdp.dom.get_box_model(backend_node_id=element.backend_node_id))
+        size = {"height": 0, "width": 0} if box_model is None else {"height": box_model.height, "width": box_model.width}
+        is_displayed = (size["height"] > 0 and size["width"] > 0)
+        is_enabled = not bool(element.attrs.get("disabled"))
+        return is_displayed and is_enabled
+        
     async def element_to_be_clickable(self, selector, timeout=10):
         try:
             start_time = asyncio.get_event_loop().time()
@@ -185,8 +232,9 @@ class ChromeHelper(object):
                 elapsed_time = asyncio.get_event_loop().time() - start_time
                 if elapsed_time > timeout:
                     raise asyncio.TimeoutError
-                is_enabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === false')
-                if is_enabled:
+                is_clickable = await self.is_clickable(element)
+                # is_enabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === false')
+                if is_clickable:
                     return element
                 await asyncio.sleep(0.2)
         except asyncio.TimeoutError:
@@ -195,13 +243,14 @@ class ChromeHelper(object):
     async def element_not_to_be_clickable(self, selector, timeout=10):
         try:
             start_time = asyncio.get_event_loop().time()
-            await self._tab.wait_for(text=selector, timeout=timeout)
+            element = await self._tab.wait_for(text=selector, timeout=timeout)
             while True:
                 elapsed_time = asyncio.get_event_loop().time() - start_time
                 if elapsed_time > timeout:
                     raise asyncio.TimeoutError
-                is_disabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === true')
-                if is_disabled:
+                # is_disabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === true')
+                is_not_clickable = not await self.is_clickable(element)
+                if is_not_clickable:
                     return True
                 await asyncio.sleep(0.2)
         except asyncio.TimeoutError:

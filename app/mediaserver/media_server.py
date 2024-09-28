@@ -229,7 +229,7 @@ class MediaServer:
             librarys = self.systemconfig.get(SystemConfigKey.SyncLibrary) or []
             # 汇总统计
             medias_count = self.get_medias_count()
-            total_media_count = medias_count.get("MovieCount") + medias_count.get("SeriesCount")
+            total_media_count = medias_count.get("MovieCount", 0) + medias_count.get("SeriesCount", 0)
             total_count = 0
             movie_count = 0
             tv_count = 0

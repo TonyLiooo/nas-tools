@@ -35,11 +35,11 @@ class AutoSignIn(_IPluginModule):
     # 主题色
     module_color = "#4179F4"
     # 插件版本
-    module_version = "1.0"
+    module_version = "1.1"
     # 插件作者
     module_author = "thsrite"
     # 作者主页
-    author_url = "https://github.com/thsrite"
+    author_url = "https://github.com/TonyLiooo"
     # 插件配置项ID前缀
     module_config_prefix = "autosignin_"
     # 加载顺序
@@ -659,6 +659,7 @@ class AutoSignIn(_IPluginModule):
         try:
             site_url = site_info.get("signurl")
             site_cookie = site_info.get("cookie")
+            site_local_storage = site_info.get("local_storage")
             ua = site_info.get("ua")
             if not site_url or not site_cookie:
                 self.warn("未配置 %s 的站点地址或Cookie，无法签到" % str(site))
@@ -670,7 +671,7 @@ class AutoSignIn(_IPluginModule):
                 home_url = StringUtils.get_base_url(site_url)
                 if "1ptba" in home_url:
                     home_url = f"{home_url}/index.php"
-                if not await chrome.visit(url=home_url, ua=ua, cookie=site_cookie, proxy=site_info.get("proxy")):
+                if not await chrome.visit(url=home_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, proxy=site_info.get("proxy")):
                     await chrome.quit()
                     self.warn("%s 无法打开网站" % site)
                     return f"【{site}】仿真签到失败，无法打开网站！"
@@ -680,6 +681,11 @@ class AutoSignIn(_IPluginModule):
                     await chrome.quit()
                     self.warn("%s 跳转站点失败" % site)
                     return f"【{site}】仿真签到失败，跳转站点失败！"
+                logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+                if not logged_in:
+                    await chrome.quit()
+                    self.warn("%s 站点未登录" % site)
+                    return f"【{site}】仿真签到失败，站点未登录！"
                 # 判断是否已签到
                 html_text = await chrome.get_html()
                 if not html_text:

@@ -198,7 +198,7 @@
         <div class="col-lg-12">
           <div class="mb-3">
             <label class="form-label">Local Storage <span class="form-help"
-                title="如需要可设置站点Local Storage，用于站点自动签到、站点数据统计、刷流、内置索引器等浏览器仿真功能，可通过cookiecloud同步或浏览器控制台发“Object.fromEntries(Object.entries(localStorage));”获取" data-bs-toggle="tooltip">?</span></label>
+                title="如需要可设置站点Local Storage，用于站点自动签到、站点数据统计、刷流、内置索引器等浏览器仿真功能，可通过cookiecloud同步或浏览器控制台发“Object.fromEntries(Object.entries(localStorage));”获取（点击问号可以复制此指令）" data-bs-toggle="tooltip" onclick="copyCommand()">?</span></label>
             <textarea class="form-control" id="site_local_storage" rows="2" placeholder="站点Local Storage"></textarea>
           </div>
         </div>
@@ -903,6 +903,15 @@
     }
     $("#captcha_code").val("");
     $("#modal-captcha-code").modal("show");
+
+    // 添加回车事件监听
+    $("#captcha_code").off("keydown").on("keydown", function(event) {
+        if (event.key === "Enter") {
+            event.preventDefault(); // 防止默认行为
+            submit_captcha_code(); // 调用提交函数
+        }
+    });
+    
     // 超时关闭
     setTimeout(`sitecookie_captcha_timeout('${siteid}')`, 60000);
   }
@@ -948,5 +957,14 @@
       })
     }
   });
+
+  function copyCommand() {
+    const command = "Object.fromEntries(Object.entries(localStorage));";
+    navigator.clipboard.writeText(command).then(() => {
+      alert("复制成功: " + command);
+    }).catch(err => {
+      console.error("复制失败: ", err);
+    });
+  }
 
 </script>

@@ -67,7 +67,7 @@ class Sites:
             uses = []
             if site_uses:
                 rss_enable = True if "D" in site_uses and site_rssurl else False
-                brush_enable = True if "S" in site_uses and site_rssurl and site_cookie else False
+                brush_enable = True if "S" in site_uses and site_rssurl and (site_cookie or site_local_storage or site_api_key) else False
                 statistic_enable = True if "T" in site_uses and (site_rssurl or site_signurl) and (site_cookie or site_local_storage or site_api_key) else False
                 uses.append("D") if rss_enable else None
                 uses.append("S") if brush_enable else None
@@ -407,7 +407,7 @@ class Sites:
         self.init_config()
         return ret
     
-    def update_site_local_storage(self, siteid, local_storage, ua=None):
+    def update_site_local_storage(self, siteid, local_storage):
         """
         更新站点local_storage
         """
