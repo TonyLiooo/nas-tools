@@ -37,7 +37,7 @@ class AutoSignIn(_IPluginModule):
     # 插件版本
     module_version = "1.1"
     # 插件作者
-    module_author = "thsrite"
+    module_author = "TonyLiooo"
     # 作者主页
     author_url = "https://github.com/TonyLiooo"
     # 插件配置项ID前缀

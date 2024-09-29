@@ -269,24 +269,25 @@ class Sites:
                     return site.get("tags")
         return None
 
-    async def test_connection(self, site_id):
+    async def test_connection(self, site_id, cookie=None, local_storage=None):
         """
         测试站点连通性
         :param site_id: 站点编号
         :return: 是否连通、错误信息、耗时
         """
         site_info = self.get_sites(siteid=site_id)
+        web_data = {"cookies":[],"local_storage":{}}
         if not site_info:
-            return False, "站点不存在", 0
-        site_cookie = site_info.get("cookie")
-        site_local_storage = site_info.get("local_storage")
+            return False, "站点不存在", 0, web_data
+        site_cookie = cookie if cookie else site_info.get("cookie")
+        site_local_storage = local_storage if local_storage else site_info.get("local_storage")
         site_api_key = site_info.get("api_key")
         if not site_cookie and not site_local_storage and not site_api_key:
-            return False, "未配置站点Cookie或local storage或api key", 0
+            return False, "未配置站点Cookie或local storage或api key", 0, web_data
         ua = site_info.get("ua") or Config().get_ua()
         site_url = StringUtils.get_base_url(site_info.get("signurl") or site_info.get("rssurl"))
         if not site_url:
-            return False, "未配置站点地址", 0
+            return False, "未配置站点地址", 0, web_data
         # 站点特殊处理...
         if '1ptba' in site_url:
             site_url = site_url + '/index.php'
@@ -298,29 +299,34 @@ class Sites:
             start_time = datetime.now()
             if not await chrome.visit(url=site_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, proxy=site_info.get("proxy")):
                 await chrome.quit()
-                return False, "Chrome模拟访问失败", 0
+                return False, "Chrome模拟访问失败", 0, web_data
             # 循环检测是否过cf
             cloudflare = await chrome.pass_cloudflare()
             seconds = int((datetime.now() - start_time).microseconds / 1000)
             if not cloudflare:
                 await chrome.quit()
-                return False, "跳转站点失败", seconds
+                return False, "跳转站点失败", seconds, web_data
             # 判断是否已签到
             html_text = await chrome.get_html()
             if not html_text:
                 await chrome.quit()
-                return False, "获取站点源码失败", 0
+                return False, "获取站点源码失败", 0, web_data
             if await SiteHelper.wait_for_logged_in(chrome._tab):
+                site_cookie = await chrome.get_cookies(str_format=False)
+                site_local_storage = await chrome.get_local_storage()
+                if site_cookie:
+                    web_data["cookies"] = site_cookie
+                if site_local_storage:
+                    web_data["local_storage"] = json.loads(site_local_storage)
+                    self.update_site_local_storage(siteid=site_id, local_storage=site_local_storage)
                 await chrome.quit()
-                return True, "连接成功", seconds
+                return True, "连接成功", seconds, web_data
             else:
                 await chrome.quit()
-                if site_url.find("m-team") != -1:
-                    return self.mteam_test_connection(site_info)
-                return False, "Cookie失效", seconds
+                return False, "Cookie失效", seconds, web_data
         else:
             if site_url.find("m-team") != -1:
-                return self.mteam_test_connection(site_info)
+                return self.mteam_test_connection(site_info), web_data
             # 计时
             start_time = datetime.now()
             res = RequestUtils(cookies=site_cookie,
@@ -330,13 +336,14 @@ class Sites:
             seconds = int((datetime.now() - start_time).microseconds / 1000)
             if res and res.status_code == 200:
                 if not SiteHelper.is_logged_in(res.text):
-                    return False, "Cookie失效", seconds
+                    return False, "Cookie失效", seconds, web_data
                 else:
-                    return True, "连接成功", seconds
+                    web_data["cookies"] = chrome.string_to_cookie_params(site_cookie, url=site_url, json_format=True)
+                    return True, "连接成功", seconds, web_data
             elif res is not None:
-                return False, f"连接失败，状态码：{res.status_code}", seconds
+                return False, f"连接失败，状态码：{res.status_code}", seconds, web_data
             else:
-                return False, "无法打开网站", seconds
+                return False, "无法打开网站", seconds, web_data
 
     def mteam_test_connection(self, site_info):
         start_time = datetime.now()

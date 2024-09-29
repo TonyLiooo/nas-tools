@@ -20,6 +20,13 @@ import re
 import asyncio
 import json
 
+import base64
+from urllib.parse import urljoin
+from Cryptodome import Random
+from Cryptodome.Cipher import AES
+from hashlib import md5
+from http.cookies import SimpleCookie
+
 class CookieCloudRunResult:
 
     def __init__(self, date=None, flag=False, msg=""):
@@ -40,11 +47,11 @@ class CookieCloud(_IPluginModule):
     # 主题色
     module_color = "#77B3D4"
     # 插件版本
-    module_version = "1.2"
+    module_version = "1.3"
     # 插件作者
-    module_author = "jxxghp"
+    module_author = "TonyLiooo"
     # 作者主页
-    author_url = "https://github.com/jxxghp"
+    author_url = "https://github.com/TonyLiooo"
     # 插件配置项ID前缀
     module_config_prefix = "cookiecloud_"
     # 加载顺序
@@ -65,6 +72,7 @@ class CookieCloud(_IPluginModule):
     _key = None
     _password = None
     _enabled = False
+    _enable_upload = True
     # 任务执行间隔
     _cron = None
     _onlyonce = False
@@ -78,6 +86,10 @@ class CookieCloud(_IPluginModule):
     _synchronousMode = 'all_mode'
     _black_list = None
     _white_list = None
+
+    # Constants
+    BLOCK_SIZE = 16
+    SALT_PREFIX = b"Salted__"
 
     @staticmethod
     def get_fields():
@@ -170,6 +182,14 @@ class CookieCloud(_IPluginModule):
                 'content': [
                     # 同一行
                     [
+                        {
+                            'title': '启用上传',
+                            'required': "",
+                            'tooltip': '开启后会将本地更新的数据上传至CookieCloud',
+                            'type': 'switch',
+                            'id': 'enable_upload',
+                            'default': False,
+                        },
                         {
                             'title': '运行时通知',
                             'required': "",
@@ -270,6 +290,7 @@ class CookieCloud(_IPluginModule):
             self._cron = config.get("cron")
             self._key = config.get("key")
             self._password = config.get("password")
+            self._enable_upload = config.get("enable_upload")
             self._notify = config.get("notify")
             self._onlyonce = config.get("onlyonce")
             self._synchronousMode = config.get("synchronousMode", "all_mode") or "all_mode"
@@ -282,18 +303,16 @@ class CookieCloud(_IPluginModule):
                 if self._server.endswith("/"):
                     self._server = self._server[:-1]
             
-
             # 测试
-            _, msg, flag = self.__download_data()
+            flag = self.check_connection()
             _last_run_date = self.__get_current_date_str()
-            _last_run_msg = msg if StringUtils.is_string_and_not_empty(msg) else "测试连通性成功"
+            _last_run_msg = "测试连通性成功" if flag else "测试连通性失败"
             _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=_last_run_msg)
-            self._last_run_results_list.append(_result)
+            self._last_run_results_list.insert(0, _result)
             if flag:
                 self._enabled = True
             else:
                 self._enabled = False
-                self.info(msg)
 
         # 停止现有任务
         self.stop_service()
@@ -301,7 +320,6 @@ class CookieCloud(_IPluginModule):
         # 启动服务
         if self._enabled:
             self._scheduler = BackgroundScheduler(timezone=Config().get_timezone())
-
             # 运行一次
             if self._onlyonce:
                 self.info(f"同步服务启动，立即运行一次")
@@ -315,6 +333,7 @@ class CookieCloud(_IPluginModule):
                     "cron": self._cron,
                     "key": self._key,
                     "password": self._password,
+                    "enable_upload": self._enable_upload,
                     "notify": self._notify,
                     "onlyonce": self._onlyonce,
                     "synchronousMode": self._synchronousMode,
@@ -345,6 +364,73 @@ class CookieCloud(_IPluginModule):
 
         # 将时间格式化为指定格式
         return new_time.strftime('%Y-%m-%d %H:%M:%S')
+    
+    def check_connection(self) -> bool:
+        """Test the connection to the CookieCloud server."""
+        try:
+            resp = self._req.get_res(self._server)
+            if resp.status_code == 200:
+                return True
+            else:
+                return False
+        except Exception as e:
+            return False
+
+    def pad(self, data):
+        """Pad data to be a multiple of BLOCK_SIZE."""
+        padding_len = self.BLOCK_SIZE - (len(data) % self.BLOCK_SIZE)
+        return data + bytes([padding_len] * padding_len)
+
+    def generate_key_iv(self, passphrase, salt):
+        """Generate key and IV from passphrase and salt using MD5."""
+        key_material = passphrase + salt
+        key = md5(key_material).digest()
+        final_key = key
+
+        # Expand key material until it's long enough for AES key and IV (32 + 16 bytes)
+        while len(final_key) < 48:
+            key = md5(key + passphrase + salt).digest()
+            final_key += key
+
+        return final_key[:32], final_key[32:]  # Return 32-byte key and 16-byte IV
+
+    def aes_encrypt(self, data, passphrase):
+        """Encrypt data using AES (CBC mode) with passphrase-derived key and IV."""
+        salt = Random.get_random_bytes(8)  # Generate random 8-byte salt
+        key, iv = self.generate_key_iv(passphrase, salt)
+
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        encrypted_data = cipher.encrypt(self.pad(data.encode('utf-8')))
+
+        # Prepend 'Salted__' and salt to the encrypted data, then encode in base64
+        return base64.b64encode(self.SALT_PREFIX + salt + encrypted_data).decode('utf-8')
+
+    def encrypt_data(self, cookies, local_storage):
+        """Encrypt cookies and localStorage data into a JSON string."""
+        # Combine cookies and localStorage data into a JSON string
+        data = json.dumps({
+            "cookie_data": cookies,
+            "local_storage_data": local_storage
+        })
+
+        # Generate a 16-byte AES key using MD5 hash from the combined key and password
+        key = md5((self._key + '-' + self._password).encode('utf-8')).hexdigest()[:16].encode('utf-8')
+        
+        # Encrypt the combined data using AES encryption
+        encrypted_data = self.aes_encrypt(data, key)
+        return encrypted_data
+
+    def __upload_data(self, cookies={}, local_storage={}) -> Tuple[str, bool]:
+        """Upload data to CookieCloud."""
+        if not self._server or not self._key or not self._password:
+            return "CookieCloud参数不正确", False
+        req_url = urljoin(self._server, '/update')
+        encrypted_data = self.encrypt_data(cookies, local_storage)
+        ret = self._req.post_res(url=req_url, json={"uuid": self._key, 'encrypted': encrypted_data})
+        if ret.status_code == 200 and ret.json()['action'] == 'done':
+            return "Upload successful!", True
+        else:
+            return f"Failed to upload. Status code: {ret.status_code}, Response: {ret.json()}", False
 
     def __download_data(self) -> Tuple[dict, str, bool]:
         """
@@ -365,7 +451,7 @@ class CookieCloud(_IPluginModule):
             return {}, "同步CookieCloud失败，错误码：%s" % ret.status_code, False
         else:
             return {}, "CookieCloud请求失败，请检查服务器地址、用户KEY及加密密码是否正确", False
-
+        
     def __cookie_sync(self):
         """
         同步站点Cookie
@@ -381,13 +467,13 @@ class CookieCloud(_IPluginModule):
             self.error(msg)
             self.__send_message(msg)
             _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-            self._last_run_results_list.append(_result)
+            self._last_run_results_list.insert(0, _result)
             return
         if not contents:
             self.info(f"未从CookieCloud获取到数据")
             self.__send_message(msg)
             _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-            self._last_run_results_list.append(_result)
+            self._last_run_results_list.insert(0, _result)
             return
         # 整理数据,使用domain域名的最后两级作为分组依据
         domain_groups = defaultdict(lambda: {"cookie": [], "local_storage": ""})
@@ -396,7 +482,7 @@ class CookieCloud(_IPluginModule):
         domain_white_list = [StringUtils.get_url_domain(re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url).group("domain")) \
             for _url in re.split(",|\n|，|\t| ", self._white_list) if _url != "" and re.search(r"(https?://)?(?P<domain>[a-zA-Z0-9.-]+)", _url)]
         cookie_items = contents.get("cookie_data", {})
-        local_storage_items = contents.get("local_storage_data", "")
+        local_storage_items = contents.get("local_storage_data", {})
         if cookie_items:
             for site, cookies in cookie_items.items():
                 for cookie in cookies:
@@ -417,12 +503,14 @@ class CookieCloud(_IPluginModule):
         # 计数
         update_count = 0
         add_count = 0
+        upload_count = 0
         # 索引器
+        sites_info = self.sites._siteByUrls
         for domain_url, content_list in domain_groups.items():
             if self._event.is_set():
                 self.info(f"同步服务停止")
                 _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-                self._last_run_results_list.append(_result)
+                self._last_run_results_list.insert(0, _result)
                 return
             if content_list["cookie"]:
                 # 只有cf的cookie过滤掉
@@ -448,9 +536,20 @@ class CookieCloud(_IPluginModule):
             # 查询站点
             site_info = self.sites.get_sites_by_url_domain(domain_url)
             if site_info:
+                del sites_info[domain_url]
                 # 检查站点连通性
-                _, success, _ = asyncio.run(self.sites.test_connection(site_id=site_info.get("id")))
-                if success in ["Cookie失效", "未配置站点Cookie"]:
+                check_flag, success, _, web_data = asyncio.run(self.sites.test_connection(site_id=site_info.get("id")))
+                if self._enable_upload or not check_flag:
+                    check_cookie_flag, _, _, _ = asyncio.run(self.sites.test_connection(site_id=site_info.get("id"),cookie=cookie_str,local_storage=local_storage))
+                if self._enable_upload and check_flag and not check_cookie_flag:
+                    cookies = web_data["cookies"]
+                    if cookies:
+                        cookie_items[domain_url] = cookies
+                    local_storage = web_data["local_storage"]
+                    if local_storage:
+                        local_storage_items[domain_url] = local_storage
+                    upload_count +=1
+                elif success in ["Cookie失效", "未配置站点Cookie或local storage或api key"] and check_cookie_flag:
                     # 已存在且连通失败的站点更新Cookie
                     if cookie_str:
                         self.sites.update_site_cookie(siteid=site_info.get("id"), cookie=cookie_str)
@@ -475,14 +574,30 @@ class CookieCloud(_IPluginModule):
                         rss_uses='T'
                     )
                     add_count += 1
+        if self._enable_upload and sites_info:
+            for domain_url, site_info in sites_info.items():
+                check_flag, success, _, web_data = asyncio.run(self.sites.test_connection(site_id=site_info.get("id")))
+                if check_flag:
+                    cookies = web_data["cookies"]
+                    if cookies:
+                        cookie_items[domain_url] = cookies
+                    local_storage = web_data["local_storage"]
+                    if local_storage:
+                        local_storage_items[domain_url] = local_storage
+                    upload_count +=1
+        if self._enable_upload and upload_count > 0:
+            msg, flag = self.__upload_data(cookie_items,local_storage_items)
+            self.info(msg)
         # 发送消息
-        if update_count or add_count:
-            msg = f"更新了 {update_count} 个站点的Cookie数据，新增了 {add_count} 个站点"
+        if update_count or add_count or upload_count:
+            msg = (f"更新了 {update_count} 个站点的Cookie、Local Storage数据，"
+                   f"上传了 {upload_count} 个站点的Cookie、Local Storage数据，"
+                   f"新增了 {add_count} 个站点")
         else:
             msg = f"同步完成，但未更新任何站点数据！"
         self.info(msg)
         _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-        self._last_run_results_list.append(_result)
+        self._last_run_results_list.insert(0, _result)
         # 发送消息
         if self._notify:
             self.__send_message(msg)

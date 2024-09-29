@@ -79,8 +79,9 @@ class ChromeHelper(object):
 
 
     @staticmethod
-    def string_to_cookie_params(cookie_string, domain):
+    def string_to_cookie_params(cookie_string, url, json_format:bool=False):
         cookie_params = []
+        domain = urlparse(str(url)).hostname
         parts = cookie_string.split(';')
         for part in parts:
             key_value = part.strip().split('=', 1)
@@ -89,6 +90,8 @@ class ChromeHelper(object):
             key = key_value[0].strip()
             value = key_value[1].strip()
             cookie_param = nd.cdp.network.CookieParam(name=key, value=value, path="/", domain=domain)
+            if json_format:
+                cookie_param.to_json()
             cookie_params.append(cookie_param)
         return cookie_params
     
@@ -422,7 +425,7 @@ class ChromeHelper(object):
                 await self._chrome.connection.send(nd.cdp.network.set_user_agent_override(user_agent = ua))
             if cookie:
                 await self._chrome.cookies.clear()
-                cookies = self.string_to_cookie_params(cookie, urlparse(str(url)).hostname)
+                cookies = self.string_to_cookie_params(cookie, url)
                 await self._chrome.connection.send(nd.cdp.storage.set_cookies(cookies))
             if self._tab:
                 await self._tab.get(url)
@@ -480,7 +483,7 @@ class ChromeHelper(object):
             return ""
         return await self._tab.get_content()
 
-    async def get_cookies(self):
+    async def get_cookies(self, str_format:bool=True):
         if not self._chrome:
             return ""
         connection = None
@@ -497,12 +500,14 @@ class ChromeHelper(object):
                 cmd_json = yield {"method": "Storage.getCookies", "params": {}}
                 return [i for i in cmd_json["cookies"]]
             cookies = await connection.send(get_cookies_cdp_generator())
-            if cookies != []:
+            if str_format and cookies != []:
                 for _cookie in cookies:
                     cookie_str += "%s=%s;" % (_cookie["name"], _cookie["value"])
         except Exception as err:
             log.error(str(err))
-        return cookie_str
+        if str_format:
+            return cookie_str
+        return cookies
     
     async def set_local_storage(self, local_storage):
         if not self._tab:

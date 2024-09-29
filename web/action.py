@@ -4120,7 +4120,7 @@ class WebAction:
         """
         测试站点连通性
         """
-        flag, msg, times = asyncio.run(Sites().test_connection(data.get("id")))
+        flag, msg, times, web_data = asyncio.run(Sites().test_connection(data.get("id")))
         code = 0 if flag else -1
         return {"code": code, "msg": msg, "time": times}
 
