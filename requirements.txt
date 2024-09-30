@@ -121,3 +121,4 @@ zhconv==1.4.3
 jellyfish==1.0.4
 chardet==5.2.0
 nodriver==0.37
+pycryptodomex==3.20.0

@@ -11,6 +11,7 @@ from app.utils import ExceptionUtils
 from app.utils.commons import singleton
 from app.utils.types import MediaServerType, MovieTypes, SystemConfigKey, ProgressKey
 from config import Config
+from typing import Union
 
 lock = threading.Lock()
 server_lock = threading.Lock()
@@ -62,7 +63,7 @@ class MediaServer:
                 self._server = self.__get_server(self._server_type)
             return self._server
 
-    def __get_server(self, ctype: [MediaServerType, str], conf=None):
+    def __get_server(self, ctype: Union[MediaServerType, str], conf=None):
         return self.__build_class(ctype=ctype, conf=conf)
 
     def get_type(self):
