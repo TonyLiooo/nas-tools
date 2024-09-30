@@ -119,16 +119,22 @@ class MTeamSpider(object):
         if not chrome.get_status():
             return True, []
         # 请求路径
-        torrentspath = r'browse?keyword={keyword}'
-        search_url = urljoin(self._indexer.domain, torrentspath.replace("{keyword}", quote(keyword)))
+        if keyword:
+            torrentspath = f'browse?keyword={quote(keyword)}'
+        else:
+            page_number = int(page) + 1 if page else 1
+            torrentspath = f'browse?pageNumber={page_number}'
+        search_url = urljoin(self._indexer.domain, torrentspath)
         # 使用浏览器获取HTML文本
         if not await chrome.visit(url=search_url,
                             local_storage=self._indexer.local_storage,
                             ua=self._indexer.ua,
                             proxy=self._indexer.proxy):
+            await chrome.quit()
             return True, []
         cloudflare = await chrome.pass_cloudflare()
         if not cloudflare:
+            await chrome.quit()
             return True, []
         # 等待页面加载完成
         try:
@@ -180,7 +186,8 @@ class MTeamSpider(object):
                             'imdbid': imdb_id
                         }
                         torrents.append(torrent)
-
+            if not keyword:
+                break
             pagination_next = soup.find('li', class_='ant-pagination-next')
             next_obj = await chrome._tab.find('//li[@title="下一頁" and contains(@class, "ant-pagination-next")]/button')
             # Extract the aria-disabled attribute
@@ -189,14 +196,12 @@ class MTeamSpider(object):
                 await chrome._tab.sleep(0.5)
             else:
                 break
-
+        await chrome.quit()
         return False, torrents
     
     def search(self, keyword, page=None):
         error_flag = True
         result_array = []
-        if not keyword:
-            return True, []
         if self._indexer.api_key:
             error_flag, result_array = self.inner_search(keyword, page)
         if not result_array and self._indexer.local_storage:
