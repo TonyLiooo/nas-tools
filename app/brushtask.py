@@ -133,6 +133,8 @@ class BrushTask(object):
                 "rss_url": task.RSSURL if task.RSSURL else site_info.get("rssurl"),
                 "rss_url_show": task.RSSURL,
                 "cookie": site_info.get("cookie"),
+                "local_storage": site_info.get("local_storage"),
+                "api_key": site_info.get("api_key"),
                 "ua": site_info.get("ua"),
                 "download_count": task.DOWNLOAD_COUNT,
                 "remove_count": task.REMOVE_COUNT,
@@ -170,6 +172,8 @@ class BrushTask(object):
         rss_rule = taskinfo.get("rss_rule")
         fraction_rule = taskinfo.get("fraction_rule")
         cookie = taskinfo.get("cookie")
+        local_storage = taskinfo.get("local_storage")
+        api_key = taskinfo.get("api_key")
         rss_free = taskinfo.get("free")
         downloader_id = taskinfo.get("downloader")
         ua = taskinfo.get("ua")
@@ -193,8 +197,8 @@ class BrushTask(object):
         if not rss_url:
             log.error("【Brush】站点 %s 未配置RSS订阅地址，无法刷流！" % site_name)
             return
-        if rss_free and not cookie:
-            log.warn("【Brush】站点 %s 未配置Cookie，无法开启促销刷流" % site_name)
+        if rss_free and not cookie and not local_storage and api_key:
+            log.warn("【Brush】站点 %s 未配置Cookie、Local Storage、令牌，无法开启促销刷流，请有效配置其中一个或多个" % site_name)
             return
         # 下载器参数
         downloader_cfg = self.downloader.get_downloader_conf(downloader_id)
@@ -261,6 +265,8 @@ class BrushTask(object):
                 # 检查种子种包含的免费限时信息
                 torrent_attr = self.siteconf.check_torrent_attr(torrent_url=page_url,
                                                                 cookie=cookie,
+                                                                local_storage=local_storage,
+                                                                api_key=api_key,
                                                                 ua=ua,
                                                                 proxy=site_proxy)
 

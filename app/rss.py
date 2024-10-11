@@ -117,6 +117,8 @@ class Rss:
                 # 站点信息
                 site_id = site_info.get("id")
                 site_cookie = site_info.get("cookie")
+                site_local_storage = site_info.get("local_storage")
+                site_api_key = site_info.get("site_api_key")
                 site_ua = site_info.get("ua")
                 # 是否解析种子详情
                 site_parse = site_info.get("parse")
@@ -193,6 +195,8 @@ class Rss:
                             site_id=site_id,
                             site_filter_rule=site_fliter_rule,
                             site_cookie=site_cookie,
+                            site_local_storage=site_local_storage,
+                            site_api_key=site_api_key,
                             site_parse=site_parse,
                             site_ua=site_ua,
                             site_proxy=site_proxy)
@@ -327,6 +331,8 @@ class Rss:
                           site_id,
                           site_filter_rule,
                           site_cookie,
+                          site_local_storage,
+                          site_api_key,
                           site_parse,
                           site_ua,
                           site_proxy):
@@ -338,7 +344,8 @@ class Rss:
         :param site_id: 站点ID
         :param site_filter_rule: 站点过滤规则
         :param site_cookie: 站点的Cookie
-        :param site_cookie: 站点的 Api 令牌
+        :param site_local_storage: 站点的Local Storage
+        :param site_api_key: 站点的Api Key(令牌)
         :param site_parse: 是否解析种子详情
         :param site_ua: 站点请求UA
         :param site_proxy: 是否使用代理
@@ -454,6 +461,8 @@ class Rss:
                 torrent_attr = self.siteconf.check_torrent_attr(torrent_url=media_info.page_url,
                                                                 cookie=site_cookie,
                                                                 ua=site_ua,
+                                                                local_storage=site_local_storage,
+                                                                api_key=site_api_key,
                                                                 proxy=site_proxy)
                 if torrent_attr.get('2xfree'):
                     download_volume_factor = 0.0

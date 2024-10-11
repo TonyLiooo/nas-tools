@@ -511,21 +511,37 @@ class ChromeHelper(object):
     
     async def set_local_storage(self, local_storage):
         if not self._tab:
-            return ""
+            return
         local_storage = json.loads(local_storage)
 
-        if type(local_storage) == dict and local_storage:
+        if not (local_storage and type(local_storage) == dict):
+            return
+        
+        previous_storage = None
+        for _ in range(10):
+            current_storage = await self.get_local_storage()
+            if current_storage == previous_storage:
+                break
+            previous_storage = current_storage
+            await self._tab.sleep(1)
+
+        for i in range(3):
             try:
                 for key in local_storage:
                     escaped_value = json.dumps(local_storage[key])
                     await self._tab.evaluate(f'localStorage.setItem("{key}", {escaped_value});')
+                break
             except Exception as err:
-                log.error("set local storage error: " + str(err))
-    
+                if i == 2:
+                    log.error("set local storage error: " + str(err))
+            await self._tab.sleep(1)
+
     async def get_local_storage(self):
         if self._tab:
             try:
                 local_storage = json.dumps(await self._tab.evaluate("Object.fromEntries(Object.entries(localStorage));"))
+                if local_storage == 'null':
+                    return ""
                 return local_storage
             except Exception as err:
                 log.error(str(err))

@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from lxml import etree
 import log
-from app.helper import ChromeHelper
+from app.helper import ChromeHelper, SiteHelper
 from app.utils import ExceptionUtils, StringUtils, RequestUtils, MteamUtils
 from app.utils.commons import singleton
 from config import Config
@@ -97,11 +97,13 @@ class SiteConf:
                 return v
         return {}
 
-    def check_torrent_attr(self, torrent_url, cookie, local_storage=None, ua=None, proxy=False):
+    def check_torrent_attr(self, torrent_url, cookie, local_storage=None, api_key=None, ua=None, proxy=False):
         """
         检验种子是否免费，当前做种人数
         :param torrent_url: 种子的详情页面
         :param cookie: 站点的Cookie
+        :param local_storage: 站点的local_storage
+        :param api_key: 站点的api_key
         :param ua: 站点的ua
         :param proxy: 是否使用代理
         :return: 种子属性，包含FREE 2XFREE HR PEER_COUNT等属性
@@ -116,7 +118,7 @@ class SiteConf:
         if not torrent_url:
             return ret_attr
 
-        if torrent_url.find('m-team') != -1:
+        if torrent_url.find('m-team') != -1 and api_key:
             info = MteamUtils.get_mteam_torrent_info(torrent_url, ua, proxy)
             if info:
                 status = info.get('status')
@@ -128,7 +130,7 @@ class SiteConf:
                     ret_attr["2xfree"] = True
                 ret_attr["free_deadline"] = status.get('toppingEndTime')
                 ret_attr["peer_count"] = int(status.get("seeders"))
-            return ret_attr
+                return ret_attr
 
         xpath_strs = self.get_grap_conf(torrent_url)
         if not xpath_strs:
@@ -154,12 +156,19 @@ class SiteConf:
                     ret_attr["free"] = True
             # 检测限时信息，result为空表示未找到 限时信息
             try:
-                title_xpath_str = "//h1[@id='top']//span"
-                result = html.xpath(title_xpath_str)
-                if len(result) > 0:
-                    free_ddl = self.__parse_free_deadline(result[0].text)
+                free_ddl = ""
+                free_deadline_xpaths = xpath_strs.get("free_deadline", [])
+                if free_deadline_xpaths:
+                    for xpath_str in free_deadline_xpaths:
+                        result = html.xpath(xpath_str)
+                        if result:
+                            free_ddl = self.__parse_free_deadline(result[0])
+                            break  
                 else:
-                    free_ddl = ""
+                    title_xpath_str = "//h1[@id='top']//span"
+                    result = html.xpath(title_xpath_str)
+                    if result and result[0].text:
+                        free_ddl = self.__parse_free_deadline(result[0].text)
                 ret_attr["free_deadline"] = free_ddl
             except Exception as err:
                 ExceptionUtils.exception_traceback(err)
@@ -190,6 +199,7 @@ class SiteConf:
         解析限免时间：
         MTEAM: 2日23時11分
         hdmayi:1天23时48分钟
+        MTEAM(促銷, 截止日期):2024-10-12 03:21:00
         转换时间格式：%Y%m%d_%H%M
         返回：转换后时间 20230715_2310
         """
@@ -198,9 +208,16 @@ class SiteConf:
             return free_deadline_str
         try:
             import re
+            import datetime
             free_deadline_re_day_pattern = r'(\d+)[天|日]'
             free_deadline_re_hour_pattern = r'(\d+)[時|时]'
             free_deadline_re_minutes_pattern = r'(\d+)[分]'
+            free_deadline_re_date_pattern = r'(\d{4})-(\d{1,2})-(\d{1,2}) (\d{1,2}):(\d{1,2})'
+            date_result = re.search(free_deadline_re_date_pattern, deadline_str)
+            if date_result:
+                 year, month, day, hour, minute = map(int, date_result.groups())
+                 deadline_date = datetime.datetime(year, month, day, hour, minute)
+                 return deadline_date.strftime("%Y%m%d_%H%M")
             day_result = re.search(free_deadline_re_day_pattern, deadline_str)
             hour_result = re.search(free_deadline_re_hour_pattern, deadline_str)
             minutes_result = re.search(free_deadline_re_minutes_pattern, deadline_str)
@@ -212,7 +229,6 @@ class SiteConf:
             hour = int(hour_str if hour_str else 0)
             min = int(min_str if min_str else 0)
             if day > 0 or hour > 0 or min > 0:
-                import datetime
                 res = datetime.datetime.now() + datetime.timedelta(days=day, hours=hour, minutes=min)
                 free_deadline_str = res.strftime("%Y%m%d_%H%M")
         except Exception as err:
@@ -225,15 +241,16 @@ class SiteConf:
     @staticmethod
     @lru_cache(maxsize=128)
     async def __get_site_page_html(url, cookie, local_storage=None, ua=None, render=False, proxy=False):
-        chrome = ChromeHelper(headless=True)
-        if render and chrome.get_status():
+        chrome = ChromeHelper()
+        if (render or local_storage) and chrome.get_status():
             # 开渲染
             if await chrome.visit(url=url, cookie=cookie, local_storage=local_storage, ua=ua, proxy=proxy):
-                # 等待页面加载完成
-                # await chrome._tab.sleep(10)
-                html = await chrome.get_html()
-                await chrome.quit()
-                return html
+                if await SiteHelper.wait_for_logged_in(chrome._tab):
+                    # 等待页面加载完成
+                    # await chrome._tab.sleep(10)
+                    html = await chrome.get_html()
+                    await chrome.quit()
+                    return html
         else:
             res = RequestUtils(
                 cookies=cookie,
