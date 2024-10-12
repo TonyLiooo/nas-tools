@@ -485,29 +485,21 @@ class ChromeHelper(object):
 
     async def get_cookies(self, str_format:bool=True):
         if not self._chrome:
-            return ""
-        connection = None
-        for tab in self._chrome.tabs:
-            if tab.closed:
-                continue
-            connection = tab
-            break
-        else:
-            connection = self._chrome.connection
+            return "" if str_format else []
+        connection = next((tab for tab in self._chrome.tabs if not tab.closed), self._chrome.connection)
         cookie_str = ""
         try:
             def get_cookies_cdp_generator():
                 cmd_json = yield {"method": "Storage.getCookies", "params": {}}
-                return [i for i in cmd_json["cookies"]]
+                return [i for i in cmd_json.get("cookies", [])]
             cookies = await connection.send(get_cookies_cdp_generator())
-            if str_format and cookies != []:
+            if str_format and cookies:
                 for _cookie in cookies:
                     cookie_str += "%s=%s;" % (_cookie["name"], _cookie["value"])
         except Exception as err:
+            cookies = "" if str_format else []
             log.error(str(err))
-        if str_format:
-            return cookie_str
-        return cookies
+        return cookie_str if str_format else cookies
     
     async def set_local_storage(self, local_storage):
         if not self._tab:
@@ -572,8 +564,14 @@ class ChromeHelper(object):
         if process_pid is None or not psutil.pid_exists(process_pid):
             return
         
-        # Get the list of child processes before closing the Browser instance
-        child_processes = psutil.Process(process_pid).children(recursive=True)
+        try:
+            # Get the list of child processes before closing the Browser instance
+            parent_process = psutil.Process(process_pid)
+            child_processes = parent_process.children(recursive=True)
+        except psutil.NoSuchProcess:
+            # log.debug(f"Parent process {process_pid} no longer exists")
+            return
+
         for proc in child_processes:
             try:
                 if proc.pid == process_pid:
