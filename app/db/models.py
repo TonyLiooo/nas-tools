@@ -441,6 +441,7 @@ class SITEUSERINFOSTATS(Base):
     USERNAME = Column(Text)
     USER_LEVEL = Column(Text)
     JOIN_AT = Column(Text)
+    LAST_SEEN = Column(Text)
     UPDATE_AT = Column(Text)
     UPLOAD = Column(Integer)
     DOWNLOAD = Column(Integer)

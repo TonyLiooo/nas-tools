@@ -226,6 +226,14 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         if join_at_text:
             self.join_at = StringUtils.unify_datetime_str(join_at_text[0].split(' (')[0].strip())
 
+        # 最近动向
+        last_seen_text = html.xpath(
+            '//tr/td[text()="最近动向" or text()="最近動向" or text()="上次访问"]/following-sibling::td[1]//text()'
+            '|//div/b[text()="最近动向"]/../text()|//span[text()="最近動向："]/following-sibling::span[1]/text()'
+        )
+        if last_seen_text:
+            self.last_seen = StringUtils.unify_datetime_str(last_seen_text[0].split(' (')[0].strip())
+
     async def _parse_message_unread_links(self, html_text, msg_links):
         html = etree.HTML(html_text)
         if not html:
@@ -439,6 +447,9 @@ class MteamSiteUserInfo(_ISiteUserInfo):
                 self.userid = user_info.get("id")
                 self.user_level = self._roleToLevelMap.get(user_info.get("role"))
                 self.join_at = user_info.get("createdDate")
+
+                memberStatus = user_info.get("memberStatus")
+                self.last_seen = memberStatus.get('lastBrowse')
 
                 self.parse_seeding()
             else:

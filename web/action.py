@@ -46,6 +46,7 @@ from app.utils import StringUtils, EpisodeFormat, RequestUtils, PathUtils, \
     SystemUtils, ExceptionUtils, Torrent
 from app.utils.types import RmtMode, OsType, SearchType, SyncType, MediaType, MovieTypes, TvTypes, \
     EventType, SystemConfigKey, RssType
+from app.utils.time_utils import TimeUtils
 from config import RMT_MEDIAEXT, RMT_SUBEXT, RMT_AUDIO_TRACK_EXT, Config
 from web.backend.search_torrents import search_medias_for_web, search_media_by_message
 from web.backend.pro_user import ProUser
@@ -4681,6 +4682,13 @@ class WebAction:
         if site_hash == "Y":
             for item in statistics:
                 item["site_hash"] = StringUtils.md5_hash(item.get("site"))
+        for item in statistics:
+            item['last_seen'] = TimeUtils.time_difference(item['last_seen'])
+            item['update_at'] = TimeUtils.time_difference(item['update_at'])
+            if TimeUtils.less_than_days(item['join_at'], 31):
+                item['level_description'] = "新手"
+            else:
+                item['level_description'] = ""
         return {"code": 0, "data": statistics}
 
     @staticmethod
