@@ -19,6 +19,7 @@ from app.utils.commons import singleton
 from app.utils.types import BrushDeleteType
 from config import BRUSH_REMOVE_TORRENTS_INTERVAL, Config
 
+from threading import Lock
 
 @singleton
 class BrushTask(object):
@@ -35,6 +36,7 @@ class BrushTask(object):
     _torrents_free_limit_cache = []
     _qb_client = "qbittorrent"
     _tr_client = "transmission"
+    _lock = Lock()
 
     def __init__(self):
         self.init_config()
@@ -94,55 +96,56 @@ class BrushTask(object):
         """
         从数据库加载刷流任务
         """
-        self._brush_tasks = {}
         brushtasks = self.dbhelper.get_brushtasks()
         if not brushtasks:
             return
-        # 加载任务到内存
-        for task in brushtasks:
-            site_info = self.sites.get_sites(siteid=task.SITE)
-            if site_info:
-                site_url = StringUtils.get_base_url(site_info.get("signurl") or site_info.get("rssurl"))
-            else:
-                site_url = ""
-            downloader_info = self.downloader.get_downloader_conf(task.DOWNLOADER)
-            total_size = round(int(self.dbhelper.get_brushtask_totalsize(task.ID)) / (1024 ** 3), 1)
-            self._brush_tasks[str(task.ID)] = {
-                "id": task.ID,
-                "name": task.NAME,
-                "site": site_info.get("name"),
-                "site_id": task.SITE,
-                "interval": task.INTEVAL,
-                "label": task.LABEL,
-                "up_limit": task.UP_LIMIT,
-                "dl_limit": task.DL_LIMIT,
-                "savepath": task.SAVEPATH,
-                "state": task.STATE,
-                "downloader": task.DOWNLOADER,
-                "downloader_name": downloader_info.get("name") if downloader_info else None,
-                "transfer": True if task.TRANSFER == "Y" else False,
-                "brushtask_free_limit_speed": True if task.BRUSHTASK_FREE_LIMIT_SPEED == "Y" else False,
-                "brushtask_free_ddl_delete": True if task.BRUSHTASK_FREE_DDL_DELETE == "Y" else False,
-                "sendmessage": True if task.SENDMESSAGE == "Y" else False,
-                "free": task.FREELEECH,
-                "rss_rule": eval(task.RSS_RULE),
-                "remove_rule": eval(task.REMOVE_RULE),
-                "fraction_rule": eval(task.FRACTION_RULE) if task.FRACTION_RULE else "",
-                "seed_size": task.SEED_SIZE,
-                "total_size": total_size,
-                "rss_url": task.RSSURL if task.RSSURL else site_info.get("rssurl"),
-                "rss_url_show": task.RSSURL,
-                "cookie": site_info.get("cookie"),
-                "local_storage": site_info.get("local_storage"),
-                "api_key": site_info.get("api_key"),
-                "ua": site_info.get("ua"),
-                "download_count": task.DOWNLOAD_COUNT,
-                "remove_count": task.REMOVE_COUNT,
-                "download_size": StringUtils.str_filesize(task.DOWNLOAD_SIZE),
-                "upload_size": StringUtils.str_filesize(task.UPLOAD_SIZE),
-                "lst_mod_date": task.LST_MOD_DATE,
-                "site_url": site_url
-            }
+        with self._lock:
+            self._brush_tasks = {}
+            # 加载任务到内存
+            for task in brushtasks:
+                site_info = self.sites.get_sites(siteid=task.SITE)
+                if site_info:
+                    site_url = StringUtils.get_base_url(site_info.get("signurl") or site_info.get("rssurl"))
+                else:
+                    site_url = ""
+                downloader_info = self.downloader.get_downloader_conf(task.DOWNLOADER)
+                total_size = round(int(self.dbhelper.get_brushtask_totalsize(task.ID)) / (1024 ** 3), 1)
+                self._brush_tasks[str(task.ID)] = {
+                    "id": task.ID,
+                    "name": task.NAME,
+                    "site": site_info.get("name"),
+                    "site_id": task.SITE,
+                    "interval": task.INTEVAL,
+                    "label": task.LABEL,
+                    "up_limit": task.UP_LIMIT,
+                    "dl_limit": task.DL_LIMIT,
+                    "savepath": task.SAVEPATH,
+                    "state": task.STATE,
+                    "downloader": task.DOWNLOADER,
+                    "downloader_name": downloader_info.get("name") if downloader_info else None,
+                    "transfer": True if task.TRANSFER == "Y" else False,
+                    "brushtask_free_limit_speed": True if task.BRUSHTASK_FREE_LIMIT_SPEED == "Y" else False,
+                    "brushtask_free_ddl_delete": True if task.BRUSHTASK_FREE_DDL_DELETE == "Y" else False,
+                    "sendmessage": True if task.SENDMESSAGE == "Y" else False,
+                    "free": task.FREELEECH,
+                    "rss_rule": eval(task.RSS_RULE),
+                    "remove_rule": eval(task.REMOVE_RULE),
+                    "fraction_rule": eval(task.FRACTION_RULE) if task.FRACTION_RULE else "",
+                    "seed_size": task.SEED_SIZE,
+                    "total_size": total_size,
+                    "rss_url": task.RSSURL if task.RSSURL else site_info.get("rssurl"),
+                    "rss_url_show": task.RSSURL,
+                    "cookie": site_info.get("cookie"),
+                    "local_storage": site_info.get("local_storage"),
+                    "api_key": site_info.get("api_key"),
+                    "ua": site_info.get("ua"),
+                    "download_count": task.DOWNLOAD_COUNT,
+                    "remove_count": task.REMOVE_COUNT,
+                    "download_size": StringUtils.str_filesize(task.DOWNLOAD_SIZE),
+                    "upload_size": StringUtils.str_filesize(task.UPLOAD_SIZE),
+                    "lst_mod_date": task.LST_MOD_DATE,
+                    "site_url": site_url
+                }
 
     def get_brushtask_info(self, taskid=None):
         """
