@@ -1,5 +1,4 @@
 bash
-chromium
 curl
 ffmpeg
 fuse3
@@ -14,5 +13,6 @@ sudo
 tzdata
 wget
 xvfb
-yq
 zip
+chromium
+py3-libtorrent-rasterbar
