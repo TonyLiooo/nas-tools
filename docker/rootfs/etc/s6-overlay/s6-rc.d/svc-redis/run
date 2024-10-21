@@ -18,7 +18,7 @@ exec \
 }
 
 if [ -f ${NASTOOL_CONFIG} ]; then
-    NT_LOG=$(yq '.app.loglevel' /config/config.yaml)
+    NT_LOG=$(python3 -c "import yaml; print(yaml.safe_load(open('/config/config.yaml'))['app']['loglevel'])")
     if [[ "${NT_LOG}" == "debug" ]]; then
         __debug
     else

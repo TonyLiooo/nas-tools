@@ -4,7 +4,8 @@
 umask ${UMASK}
 
 if [ -f ${NASTOOL_CONFIG} ]; then
-    NT_PORT=$(yq '.app.web_port' /config/config.yaml)
+    # NT_PORT=$(yq '.app.web_port' /config/config.yaml)
+    NT_PORT=$(python3 -c "import yaml; print(yaml.safe_load(open('/config/config.yaml'))['app']['web_port'])")
 else
     NT_PORT=3000
 fi
