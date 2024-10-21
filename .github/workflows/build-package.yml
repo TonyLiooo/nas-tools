@@ -9,16 +9,16 @@ jobs:
   Windows-build:
     runs-on: windows-latest
     steps:
-    - name: Init Python 3.10.11
+    - name: Init Python 3.12.7
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10.11'
+        python-version: '3.12.7'
 
     - name: Install dependent packages
       run: |
         python -m pip install --upgrade pip
         pip install wheel numpy==1.23.5 pyparsing==3.0.9 wxpython==4.2.0 pyinstaller==5.7.0
-        git clone --depth=1 -b master https://github.com/0xforee/nas-tools --recurse-submodule
+        git clone --depth=1 -b master https://github.com/TonyLiooo/nas-tools --recurse-submodule
         cd nas-tools
         pip install -r package/requirements.txt
         echo ("NASTOOL_CONFIG=D:/a/nas-tools/nas-tools/nas-tools/config/config.yaml") >> $env:GITHUB_ENV
@@ -29,15 +29,15 @@ jobs:
       run: |
         cd nas-tools
         dir
-        copy .\package\rely\upx.exe c:\hostedtoolcache\windows\python\3.10.11\x64\Scripts
-        copy .\package\rely\hook-cn2an.py c:\hostedtoolcache\windows\python\3.10.11\x64\lib\site-packages\pyinstaller\hooks
-        copy .\package\rely\hook-zhconv.py c:\hostedtoolcache\windows\python\3.10.11\x64\lib\site-packages\pyinstaller\hooks
-        copy .\package\rely\hook-iso639.py c:\hostedtoolcache\windows\python\3.10.11\x64\lib\site-packages\pyinstaller\hooks
+        copy .\package\rely\upx.exe c:\hostedtoolcache\windows\python\3.12.7\x64\Scripts
+        copy .\package\rely\hook-cn2an.py c:\hostedtoolcache\windows\python\3.12.7\x64\lib\site-packages\pyinstaller\hooks
+        copy .\package\rely\hook-zhconv.py c:\hostedtoolcache\windows\python\3.12.7\x64\lib\site-packages\pyinstaller\hooks
+        copy .\package\rely\hook-iso639.py c:\hostedtoolcache\windows\python\3.12.7\x64\lib\site-packages\pyinstaller\hooks
         copy .\third_party.txt .\package
-        copy .\package\rely\template.jinja2 c:\hostedtoolcache\windows\Python\3.10.11\x64\lib\site-packages\setuptools\_vendor\pyparsing\diagram
-        xcopy .\web c:\hostedtoolcache\windows\python\3.10.11\x64\lib\site-packages\web\ /e
-        xcopy .\config c:\hostedtoolcache\windows\python\3.10.11\x64\lib\site-packages\config\ /e
-        xcopy .\scripts c:\hostedtoolcache\windows\python\3.10.11\x64\lib\site-packages\scripts\ /e
+        copy .\package\rely\template.jinja2 c:\hostedtoolcache\windows\Python\3.12.7\x64\lib\site-packages\setuptools\_vendor\pyparsing\diagram
+        xcopy .\web c:\hostedtoolcache\windows\python\3.12.7\x64\lib\site-packages\web\ /e
+        xcopy .\config c:\hostedtoolcache\windows\python\3.12.7\x64\lib\site-packages\config\ /e
+        xcopy .\scripts c:\hostedtoolcache\windows\python\3.12.7\x64\lib\site-packages\scripts\ /e
         cd package
         pyinstaller nas-tools.spec
         dir  D:/a/nas-tools/nas-tools/nas-tools/package/dist
@@ -53,16 +53,16 @@ jobs:
   Linux-build-amd64:
     runs-on: ubuntu-latest
     steps:
-      - name: Init Python 3.10.11
+      - name: Init Python 3.12.7
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10.11'
+          python-version: '3.12.7'
 
       - name: Install dependent packages
         run: |
           python -m pip install --upgrade pip
           pip install wheel pyinstaller==5.7.0
-          git clone --depth=1 -b master https://github.com/0xforee/nas-tools --recurse-submodule
+          git clone --depth=1 -b master https://github.com/TonyLiooo/nas-tools --recurse-submodule
           cd nas-tools
           pip install -r package/requirements.txt
           echo ("NASTOOL_CONFIG=/home/runner/work/nas-tools/nas-tools/nas-tools/config/config.yaml") >> $env:GITHUB_ENV
@@ -74,14 +74,14 @@ jobs:
           cd nas-tools
           pwd
           ls -all
-          cp ./package/rely/hook-cn2an.py /opt/hostedtoolcache/Python/3.10.11/x64/lib/python3.10/site-packages/PyInstaller/hooks/
-          cp ./package/rely/hook-zhconv.py /opt/hostedtoolcache/Python/3.10.11/x64/lib/python3.10/site-packages/PyInstaller/hooks/
-          cp ./package/rely/hook-iso639.py /opt/hostedtoolcache/Python/3.10.11/x64/lib/python3.10/site-packages/PyInstaller/hooks/
+          cp ./package/rely/hook-cn2an.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/PyInstaller/hooks/
+          cp ./package/rely/hook-zhconv.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/PyInstaller/hooks/
+          cp ./package/rely/hook-iso639.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/PyInstaller/hooks/
           cp ./third_party.txt ./package/
-          cp ./package/rely/template.jinja2 /opt/hostedtoolcache/Python/3.10.11/x64/lib/python3.10/site-packages/setuptools/_vendor/pyparsing/diagram/
-          cp -r ./web/. /opt/hostedtoolcache/Python/3.10.11/x64/lib/python3.10/site-packages/web/
-          cp -r ./config/. /opt/hostedtoolcache/Python/3.10.11/x64/lib/python3.10/site-packages/config/
-          cp -r ./scripts/. /opt/hostedtoolcache/Python/3.10.11/x64/lib/python3.10/site-packages/scripts/
+          cp ./package/rely/template.jinja2 /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/setuptools/_vendor/pyparsing/diagram/
+          cp -r ./web/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/web/
+          cp -r ./config/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/config/
+          cp -r ./scripts/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/scripts/
           cd package
           pwd
           ls -all

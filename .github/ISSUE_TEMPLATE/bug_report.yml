@@ -16,9 +16,9 @@ body:
       label: 确认
       description: 在提交 issue 之前，请确认你已经阅读并确认以下内容
       options:
-        - label: 我的版本是最新版本，我的版本号与 [version](https://github.com/0xforee/nas-tools/releases/latest) 相同。
+        - label: 我的版本是最新版本，我的版本号与 [version](https://github.com/TonyLiooo/nas-tools/releases/latest) 相同。
           required: true
-        - label: 我已经 [issue](https://github.com/0xforee/nas-tools/issues) 中搜索过，确认我的问题没有被提出过。
+        - label: 我已经 [issue](https://github.com/TonyLiooo/nas-tools/issues) 中搜索过，确认我的问题没有被提出过。
           required: true
         - label: 我已经修改标题，将标题中的 描述 替换为我遇到的问题。
           required: true
@@ -53,5 +53,5 @@ body:
     id: logs
     attributes:
       label: 发生问题时系统日志和配置文件
-      description: 问题出现时，程序运行日志请复制到这里。抓取日志参考：https://github.com/0xforee/nas-tools/wiki/%E5%A6%82%E4%BD%95%E6%8A%93%E5%8F%96%E6%97%A5%E5%BF%97%EF%BC%9F
+      description: 问题出现时，程序运行日志请复制到这里。抓取日志参考：https://github.com/TonyLiooo/nas-tools/wiki/%E5%A6%82%E4%BD%95%E6%8A%93%E5%8F%96%E6%97%A5%E5%BF%97%EF%BC%9F
       render: bash
