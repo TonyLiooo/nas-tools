@@ -1,14 +1,14 @@
 # NAS媒体库管理工具
 
 
-[![GitHub stars](https://img.shields.io/github/stars/0xforee/nas-tools?style=plastic)](https://github.com/0xforee/nas-tools/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/0xforee/nas-tools?style=plastic)](https://github.com/0xforee/nas-tools/network/members)
-[![GitHub issues](https://img.shields.io/github/issues/0xforee/nas-tools?style=plastic)](https://github.com/0xforee/nas-tools/issues)
-[![GitHub license](https://img.shields.io/github/license/0xforee/nas-tools?style=plastic)](https://github.com/0xforee/nas-tools/blob/master/LICENSE.md)
-[![Docker pulls](https://img.shields.io/docker/pulls/0xforee/nas-tools?style=plastic)](https://hub.docker.com/r/0xforee/nas-tools)
-[![Platform](https://img.shields.io/badge/platform-amd64/arm64-pink?style=plastic)](https://hub.docker.com/r/0xforee/nas-tools)
+[![GitHub stars](https://img.shields.io/github/stars/TonyLiooo/nas-tools?style=plastic)](https://github.com/TonyLiooo/nas-tools/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/TonyLiooo/nas-tools?style=plastic)](https://github.com/TonyLiooo/nas-tools/network/members)
+[![GitHub issues](https://img.shields.io/github/issues/TonyLiooo/nas-tools?style=plastic)](https://github.com/TonyLiooo/nas-tools/issues)
+[![GitHub license](https://img.shields.io/github/license/TonyLiooo/nas-tools?style=plastic)](https://github.com/TonyLiooo/nas-tools/blob/master/LICENSE.md)
+[![Docker pulls](https://img.shields.io/docker/pulls/TonyLiooo/nas-tools?style=plastic)](https://hub.docker.com/r/TonyLiooo/nas-tools)
+[![Platform](https://img.shields.io/badge/platform-amd64/arm64-pink?style=plastic)](https://hub.docker.com/r/TonyLiooo/nas-tools)
 
-Docker：https://hub.docker.com/repository/docker/0xforee/nas-tools  
+Docker：https://hub.docker.com/repository/docker/TonyLiooo/nas-tools  
 
 TG 交流群：https://t.me/nastoolsolder  
 TG 通知频道：https://t.me/ntolder_notify
@@ -32,7 +32,7 @@ TG 通知频道：https://t.me/ntolder_notify
 ## 安装
 ### 1、Docker
 ```
-docker pull 0xforee/nas-tools:latest
+docker pull TonyLiooo/nas-tools:latest
 ```
 教程见 [这里](docker/readme.md) 。
 
@@ -41,7 +41,7 @@ docker pull 0xforee/nas-tools:latest
 ### 2、本地运行
 python3.10版本，需要预安装cython，如发现缺少依赖包需额外安装：
 ```
-git clone -b master https://github.com/0xforee/nas-tools --recurse-submodule 
+git clone -b master https://github.com/TonyLiooo/nas-tools --recurse-submodule 
 python3 -m pip install -r requirements.txt
 export NASTOOL_CONFIG="/xxx/config/config.yaml"
 nohup python3 run.py & 
