@@ -1,23 +1,23 @@
 FROM python:3.12.7-alpine3.20
-
-# Install build dependencies and required packages in one layer
+COPY requirements.txt ./
+COPY package_list.txt ./
+RUN apk update
 RUN apk add --no-cache --virtual .build-deps \
         libffi-dev \
         gcc \
         musl-dev \
         libxml2-dev \
         libxslt-dev \
-    && apk add --no-cache $(wget --no-check-certificate -qO- https://raw.githubusercontent.com/TonyLiooo/nas-tools/master/package_list.txt) \
-    && curl -sSf https://rclone.org/install.sh | bash \
-    && ARCH=$(if [ "$(uname -m)" = "x86_64" ]; then echo "amd64"; else echo "arm64"; fi) \
-    && curl -sSfL https://dl.min.io/client/mc/release/linux-${ARCH}/mc --create-dirs -o /usr/bin/mc \
+    && apk add --no-cache $(echo $(cat ./package_list.txt)) \
+    && curl https://rclone.org/install.sh | bash \
+    && if [ "$(uname -m)" = "x86_64" ]; then ARCH=amd64; elif [ "$(uname -m)" = "aarch64" ]; then ARCH=arm64; fi \
+    && curl https://dl.min.io/client/mc/release/linux-${ARCH}/mc --create-dirs -o /usr/bin/mc \
     && chmod +x /usr/bin/mc \
-    && pip install --upgrade pip setuptools wheel cython \
-    && pip install -r https://raw.githubusercontent.com/TonyLiooo/nas-tools/master/requirements.txt \
+    && pip install --upgrade pip setuptools wheel \
+    && pip install cython \
+    && pip install -r ./requirements.txt \
     && apk del --purge .build-deps \
-    && rm -rf /var/cache/apk/* /tmp/* /root/.cache/*
-
-# Set environment variables
+    && rm -rf /tmp/* /root/.cache /var/cache/apk/*
 ENV PYTHONPATH=/usr/lib/python3.12/site-packages \
     S6_SERVICES_GRACETIME=30000 \
     S6_KILL_GRACETIME=60000 \
@@ -25,7 +25,7 @@ ENV PYTHONPATH=/usr/lib/python3.12/site-packages \
     S6_SYNC_DISKS=1 \
     HOME="/nt" \
     TERM="xterm" \
-    PATH="${PATH}:/usr/lib/chromium" \
+    PATH=${PATH}:/usr/lib/chromium \
     LANG="C.UTF-8" \
     TZ="Asia/Shanghai" \
     NASTOOL_CONFIG="/config/config.yaml" \
@@ -41,26 +41,21 @@ ENV PYTHONPATH=/usr/lib/python3.12/site-packages \
     UMASK=000 \
     PYTHONWARNINGS="ignore:semaphore_tracker:UserWarning" \
     WORKDIR="/nas-tools"
-
-# Set working directory and create necessary directories and users
 WORKDIR ${WORKDIR}
-RUN mkdir -p ${HOME} \
+RUN mkdir ${HOME} \
     && addgroup -S nt -g 911 \
     && adduser -S nt -G nt -h ${HOME} -s /bin/bash -u 911 \
     && python_ver=$(python3 -V | awk '{print $2}') \
-    && mkdir -p /usr/lib/python${python_ver%.*}/site-packages \
+    && python_path=$(which python3) \
+    && [ -d "/usr/lib/python${python_ver%.*}/site-packages" ] || mkdir -p "/usr/lib/python${python_ver%.*}/site-packages" \
     && echo "${WORKDIR}/" > /usr/lib/python${python_ver%.*}/site-packages/nas-tools.pth \
     && echo 'fs.inotify.max_user_watches=5242880' >> /etc/sysctl.conf \
     && echo 'fs.inotify.max_user_instances=5242880' >> /etc/sysctl.conf \
     && echo "nt ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
-    && git config --global pull.ff only \
-    && git clone -b master ${REPO_URL} ${WORKDIR} --depth=1 --recurse-submodule \
-    && git config --global --add safe.directory ${WORKDIR}
-
-# Copy root filesystem and expose port
-COPY --chmod=755 ./rootfs /
+    && git config --global pull.ff only
+COPY --chmod=755 . ${WORKDIR}/
+RUN git config --global --add safe.directory ${WORKDIR}
+COPY --chmod=755 ./docker/rootfs /
 EXPOSE 3000
 VOLUME ["/config"]
-
-# Set entry point
-ENTRYPOINT ["/init"]
+ENTRYPOINT [ "/init" ]

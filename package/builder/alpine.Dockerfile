@@ -1,14 +1,14 @@
-FROM python:3.10.11-alpine AS Builder
+FROM python:3.12.7-alpine3.20 AS builder
 
 ARG branch
 
 ENV NASTOOL_CONFIG=/nas-tools/config/config.yaml
-ENV py_site_packages=/usr/local/lib/python3.10/site-packages
+ENV py_site_packages=/usr/local/lib/python3.12/site-packages
 
 RUN apk add build-base git libxslt-dev libxml2-dev musl-dev gcc libffi-dev
 RUN pip install --upgrade pip setuptools
-RUN pip install wheel cython pyinstaller==5.7.0
-RUN git clone --depth=1 -b ${branch} https://github.com/0xforee/nas-tools --recurse-submodule /nas-tools
+RUN pip install wheel cython pyinstaller
+RUN git clone --depth=1 -b ${branch} https://github.com/TonyLiooo/nas-tools --recurse-submodule /nas-tools
 WORKDIR /nas-tools
 RUN pip install -r package/requirements.txt
 RUN pip install pyparsing
@@ -29,4 +29,4 @@ RUN cp /nas-tools/package/dist/nas-tools .
 
 FROM scratch
 
-COPY --from=Builder /rootfs/nas-tools /nas-tools
+COPY --from=builder /rootfs/nas-tools /nas-tools

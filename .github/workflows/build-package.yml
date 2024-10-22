@@ -74,14 +74,14 @@ jobs:
           cd nas-tools
           pwd
           ls -all
-          cp ./package/rely/hook-cn2an.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/PyInstaller/hooks/
-          cp ./package/rely/hook-zhconv.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/PyInstaller/hooks/
-          cp ./package/rely/hook-iso639.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/PyInstaller/hooks/
+          cp ./package/rely/hook-cn2an.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.12/site-packages/PyInstaller/hooks/
+          cp ./package/rely/hook-zhconv.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.12/site-packages/PyInstaller/hooks/
+          cp ./package/rely/hook-iso639.py /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.12/site-packages/PyInstaller/hooks/
           cp ./third_party.txt ./package/
-          cp ./package/rely/template.jinja2 /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/setuptools/_vendor/pyparsing/diagram/
-          cp -r ./web/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/web/
-          cp -r ./config/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/config/
-          cp -r ./scripts/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.10/site-packages/scripts/
+          cp ./package/rely/template.jinja2 /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.12/site-packages/setuptools/_vendor/pyparsing/diagram/
+          cp -r ./web/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.12/site-packages/web/
+          cp -r ./config/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.12/site-packages/config/
+          cp -r ./scripts/. /opt/hostedtoolcache/Python/3.12.7/x64/lib/python3.12/site-packages/scripts/
           cd package
           pwd
           ls -all
