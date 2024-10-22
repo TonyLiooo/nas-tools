@@ -10,7 +10,7 @@ git
 inotify-tools
 locales
 musl-dev
-netcat
+netcat-openbsd
 procps
 redis
 sudo
@@ -19,4 +19,4 @@ wget
 xvfb
 zip
 chromium
-py3-libtorrent-rasterbar
+python3-libtorrent
