@@ -1,5 +1,7 @@
 FROM python:3.11.10-slim-bookworm AS builder
 
+RUN apt-get update && apt-get install -y git binutils && apt-get clean
+
 ARG branch
 
 ENV NASTOOL_CONFIG=/nas-tools/config/config.yaml
