@@ -14,7 +14,7 @@ from app.utils.exception_utils import ExceptionUtils
 from app.utils.types import MediaType
 from config import Config
 from feapder.utils.tools import urlencode
-
+from typing import Optional, Union, List
 
 class TorrentSpider(feapder.AirSpider):
     _webdriver_path = SystemUtils.get_webdriver_path()
@@ -90,7 +90,7 @@ class TorrentSpider(feapder.AirSpider):
     torrents_info_array = []
 
     def setparam(self, indexer,
-                 keyword: [str, list] = None,
+                 keyword: Optional[Union[str, List]] = None,
                  page=None,
                  referer=None,
                  mtype: MediaType = None):
@@ -259,6 +259,31 @@ class TorrentSpider(feapder.AirSpider):
         if self.proxies:
             request.proxies = self.proxies
         return request
+
+    def Gettitle_with_group(self, group, torrent):
+        # title default
+        if 'title' not in self.fields:
+            return
+        selector = self.fields.get('title', {})
+        if 'text' in selector:
+            render_dict = {}
+            if "title_default" in self.fields:
+                title_default_selector = self.fields.get('title_default', {})
+                title_default_item = torrent(title_default_selector.get('selector', '')).clone()
+                self.__remove(title_default_item, title_default_selector)
+                items = self.__attribute_or_text(title_default_item, selector)
+                title_default = self.__index(items, title_default_selector)
+                render_dict.update({'title_default': title_default})
+            if "title_optional" in self.fields:
+                title_optional_selector = self.fields.get('title_optional', {})
+                title_optional_item = group(title_optional_selector.get('selector', '')).clone()
+                self.__remove(title_optional_item, title_optional_selector)
+                items = self.__attribute_or_text(title_optional_item, title_optional_selector)
+                title_optional = self.__index(items, title_optional_selector)
+                render_dict.update({'title_optional': title_optional})
+            self.torrents_info['title'] = Template(selector.get('text')).render(fields=render_dict)
+        self.torrents_info['title'] = self.__filter_text(self.torrents_info.get('title'),
+                                                         selector.get('filters'))
 
     def Gettitle_default(self, torrent):
         # title default
