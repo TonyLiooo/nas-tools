@@ -10,8 +10,6 @@
 
 Docker：https://hub.docker.com/repository/docker/TonyLiooo/nas-tools  
 
-TG 交流群：https://t.me/nastoolsolder  
-TG 通知频道：https://t.me/ntolder_notify
 
 
 ## 功能： 
