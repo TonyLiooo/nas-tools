@@ -178,27 +178,34 @@ class Qbittorrent(_IDownloadClient):
     def get_torrents(self, ids=None, status=None, tag=None):
         """
         获取种子列表
-        return: 种子列表, 是否发生异常
+        :param ids: 种子哈希列表
+        :param status: 状态过滤条件（可以是单个状态或列表）
+        :param tag: 标签过滤条件（可以是单个标签或列表）
+        :return: 种子列表, 是否发生异常
         """
         if not self.qbc:
             return [], True
+
+        all_torrents = []
         try:
-            torrents = self.qbc.torrents_info(torrent_hashes=ids,
-                                              status_filter=status)
+            # 根据 status 是否为列表分别处理
+            status_list = status if isinstance(status, list) else [status]
+            for single_status in status_list:
+                torrents = self.qbc.torrents_info(torrent_hashes=ids, status_filter=single_status)
+                all_torrents.extend(torrents)
+
+            # 过滤标签
             if tag:
-                results = []
-                if not isinstance(tag, list):
-                    tag = [tag]
-                for torrent in torrents:
-                    include_flag = True
-                    for t in tag:
-                        if t and t not in torrent.get("tags"):
-                            include_flag = False
-                            break
-                    if include_flag:
-                        results.append(torrent)
-                return results or [], False
-            return torrents or [], False
+                tags_to_filter = tag if isinstance(tag, list) else [tag]
+                filtered_torrents = [
+                    torrent for torrent in all_torrents
+                    if all(t in torrent.get("tags", []) for t in tags_to_filter)
+                ]
+                return filtered_torrents, False
+
+            # 没有标签过滤时，直接返回所有结果
+            return all_torrents, False
+
         except Exception as err:
             log.error(f"【{self.client_name}】{self.name} 获取种子列表出错：{str(err)}")
             return [], True
