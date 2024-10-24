@@ -47,10 +47,12 @@ class BTSchool(_ISiteSigninHandler):
                                                  site=site)
             # 仿真访问失败
             if msg:
+                await chrome.quit()
                 return False, msg
 
             # 已签到
             if self._sign_text not in html_text:
+                await chrome.quit()
                 self.info(f"今日已签到")
                 return True, f'【{site}】今日已签到'
 
@@ -116,7 +118,6 @@ class BTSchool(_ISiteSigninHandler):
                 return f"【{site}】仿真签到失败，跳转站点失败！", None
         logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
         if not logged_in:
-            await chrome.quit()
             self.warn("%s 站点未登录" % site)
             return f"【{site}】仿真签到失败，站点未登录！", None
         # 获取html

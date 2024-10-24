@@ -36,7 +36,9 @@ CHALLENGE_SELECTORS = [
     # Custom CloudFlare for EbookParadijs, Film-Paleis, MuziekFabriek and Puur-Hollands
     'td.info #js_info',
     # Fairlane / pararius.com
-    'div.vc div.text-box h2'
+    'div.vc div.text-box h2',
+    # chaitin
+    'button#sl-check'
 ]
 SHORT_TIMEOUT = 10
 CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "60"))
@@ -170,6 +172,14 @@ async def click_verify(tab: Tab):
         log.debug("Cloudflare verify checkbox found and clicked")
     except Exception as e:
         log.debug(f"Cloudflare verify checkbox not found: {str(e)}")
+
+    try:
+        log.debug("Try to find the chaitin verify checkbox")
+        selector = "button[@id='sl-check']"
+        await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
+        log.debug("Cloudflare verify checkbox found and clicked")
+    except Exception as e:
+        log.debug(f"chaitin verify checkbox not found: {str(e)}")
 
     try:
         await asyncio.wait_for(check_document_ready(tab), 20)

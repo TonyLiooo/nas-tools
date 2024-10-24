@@ -15,6 +15,7 @@ class HDFans(_ISiteSigninHandler):
 
     # 签到成功
     _success_text = "签到成功"
+    _sign_text = "签到已得"
     _repeat_text = "请不要重复签到哦"
 
     @classmethod
@@ -48,10 +49,12 @@ class HDFans(_ISiteSigninHandler):
                                                  site=site)
             # 仿真访问失败
             if msg:
+                await chrome.quit()
                 return False, msg
 
             # 已签到
-            if self._repeat_text not in html_text:
+            if self._sign_text in html_text:
+                await chrome.quit()
                 self.info(f"今日已签到")
                 return True, f'【{site}】今日已签到'
 
@@ -67,7 +70,7 @@ class HDFans(_ISiteSigninHandler):
                 return False, msg
 
             # 签到成功
-            if self._success_text not in html_text:
+            if self._success_text in html_text:
                 self.info(f"签到成功")
                 return True, f'【{site}】签到成功'
             
@@ -105,7 +108,7 @@ class HDFans(_ISiteSigninHandler):
             self.warn("%s 无法打开网站" % site)
             return f"【{site}】仿真签到失败，无法打开网站！", None
         # 检测是否过cf
-        chrome._tab.sleep(3)
+        await chrome._tab.sleep(3)
         if under_challenge(await chrome.get_html()):
             # 循环检测是否过cf
             cloudflare = await chrome.pass_cloudflare()
@@ -114,7 +117,6 @@ class HDFans(_ISiteSigninHandler):
                 return f"【{site}】仿真签到失败，跳转站点失败！", None
         logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
         if not logged_in:
-            await chrome.quit()
             self.warn("%s 站点未登录" % site)
             return f"【{site}】仿真签到失败，站点未登录！", None
         # 获取html
