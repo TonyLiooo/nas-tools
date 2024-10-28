@@ -11,7 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.plugins.modules._base import _IPluginModule
 from app.sites import Sites
-from app.utils import RequestUtils, StringUtils
+from app.utils import RequestUtils, StringUtils, MteamUtils
 from config import Config
 from web.backend.pro_user import ProUser
 from app.indexer.indexerConf import IndexerConf
@@ -26,6 +26,8 @@ from Cryptodome import Random
 from Cryptodome.Cipher import AES
 from hashlib import md5
 from http.cookies import SimpleCookie
+
+from app.helper import ChromeHelper
 
 class CookieCloudRunResult:
 
@@ -499,6 +501,8 @@ class CookieCloud(_IPluginModule):
                     continue
                 elif self._synchronousMode and self._synchronousMode == "white_mode" and domain_key not in domain_white_list:
                     continue
+                if 'm-team' in domain_key:
+                    local_storage = ChromeHelper.filter_local_storage(local_storage, keep_keys=MteamUtils._local_keep_keys)
                 domain_groups[domain_key]["local_storage"] = json.dumps(local_storage)
         # 计数
         update_count = 0

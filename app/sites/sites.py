@@ -323,7 +323,7 @@ class Sites:
                 return True, "连接成功", seconds, web_data
             else:
                 await chrome.quit()
-                return False, "Cookie失效", seconds, web_data
+                return False, "Cookie/Local Storage失效", seconds, web_data
         else:
             if site_url.find("m-team") != -1:
                 return self.mteam_test_connection(site_info), web_data
@@ -366,6 +366,9 @@ class Sites:
         """
         添加站点
         """
+        if 'm-team' in signurl:
+            local_storage = ChromeHelper.filter_local_storage(local_storage, keep_keys=MteamUtils._local_keep_keys)
+
         ret = self.dbhelper.insert_config_site(name=name,
                                                site_pri=site_pri,
                                                rssurl=rssurl,
@@ -383,6 +386,9 @@ class Sites:
         """
         更新站点
         """
+        if 'm-team' in signurl:
+            local_storage = ChromeHelper.filter_local_storage(local_storage, keep_keys=MteamUtils._local_keep_keys)
+
         ret = self.dbhelper.update_config_site(tid=tid,
                                                name=name,
                                                site_pri=site_pri,
@@ -418,6 +424,11 @@ class Sites:
         """
         更新站点local_storage
         """
+        site_info = self._siteByIds.get(int(siteid),{})
+        
+        if 'm-team' in site_info.get('signurl',''):
+            local_storage = ChromeHelper.filter_local_storage(local_storage, keep_keys=MteamUtils._local_keep_keys)
+            
         ret = self.dbhelper.update_site_local_storage(tid=siteid, local_storage=local_storage)
         self.init_config()
         return ret

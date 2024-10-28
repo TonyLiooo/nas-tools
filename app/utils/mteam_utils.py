@@ -9,6 +9,7 @@ import asyncio
 import shutil
 
 class MteamUtils:
+    _local_keep_keys = ['auth', 'persist:persist']
 
     @staticmethod
     def get_api_url(url):

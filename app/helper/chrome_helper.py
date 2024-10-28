@@ -501,6 +501,25 @@ class ChromeHelper(object):
             log.error(str(err))
         return cookie_str if str_format else cookies
     
+    @staticmethod
+    def filter_local_storage(local_storage, keep_keys=None, remove_keys=None):
+        is_json = False
+        if isinstance(local_storage, str):
+            try:
+                local_storage = json.loads(local_storage)
+                is_json = True
+            except json.JSONDecodeError:
+                pass
+
+        if not isinstance(local_storage, dict):
+            return local_storage
+        elif keep_keys is not None:
+            filtered_storage = {k: v for k, v in local_storage.items() if k in keep_keys}
+        elif remove_keys is not None:
+            filtered_storage = {k: v for k, v in local_storage.items() if k not in remove_keys}
+
+        return json.dumps(filtered_storage) if is_json else filtered_storage
+
     async def set_local_storage(self, local_storage):
         if not self._tab:
             return

@@ -74,15 +74,16 @@ class MTeam(_ISiteSigninHandler):
                                                  ua=ua,
                                                  proxy=proxy,
                                                  site=site)
-            if SiteHelper.is_logged_in(html_text) and local_storage:
-                self.sites = Sites()
-                local_storage = await chrome.get_local_storage()
-                self.sites.update_site_local_storage(siteid=site_info.get("id"), local_storage=local_storage)
 
             if not html_text:
                 await chrome.quit()
                 return False, f"【{site}】${msg}"
 
+            if SiteHelper.is_logged_in(html_text) and local_storage:
+                self.sites = Sites()
+                local_storage = await chrome.get_local_storage()
+                self.sites.update_site_local_storage(siteid=site_info.get("id"), local_storage=local_storage)
+                
             # second, check if it is home
             if "魔力值" in html_text:
                 await chrome.quit()
