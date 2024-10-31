@@ -212,11 +212,12 @@ class SiteUserInfo(object):
                     site_user_info.parse()
                 log.debug(f"【Sites】站点 {site_name} 解析完成")
 
+                await site_user_info.chrome.quit()
+                
                 # 获取不到数据时，仅返回错误信息，不做历史数据更新
                 if site_user_info.err_msg:
                     with self.lock_site:
                         self._sites_data.update({site_name: {"err_msg": site_user_info.err_msg}})
-                    await site_user_info.chrome.quit()
                     return
 
                 # 发送通知，存在未读消息
@@ -245,7 +246,6 @@ class SiteUserInfo(object):
                 log.debug(f"【Sites】站点 {site_name} 数据：{_updated_sites_json}")
                 with self.lock_site:
                     self._sites_data.update(_updated_sites_data)
-                await site_user_info.chrome.quit()
                 return site_user_info
 
         except Exception as e:

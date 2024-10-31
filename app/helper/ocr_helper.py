@@ -12,6 +12,7 @@ class OcrHelper:
     _ocr_b64_url = "https://ocr.ddsrem.com/captcha/base64"
     _baiduocr_api_key = None
     _baiduocr_secret_key = None
+    _custom_oc_url = None
 
     def __init__(self):
         ocr = Config().get_config('ocr')
@@ -20,7 +21,7 @@ class OcrHelper:
             self._baiduocr_secret_key = ocr.get('baiduocr_secret_key', '') or ''
             custom_oc_url = ocr.get('custom_ocr_url', '') or ''
             if StringUtils.is_string_and_not_empty(custom_oc_url):
-                self._ocr_b64_url = custom_oc_url.rstrip('/')
+                self._custom_oc_url = custom_oc_url.rstrip('/')
 
     def get_captcha_text(self, image_url=None, image_b64=None, cookie=None, ua=None):
         """
@@ -47,14 +48,19 @@ class OcrHelper:
         if StringUtils.is_string_and_not_empty(captcha):
             return captcha
 
-        if not self.custom_server_avaliable():
-            return ""
+        if self.custom_server_avaliable():
+            ret = RequestUtils(content_type="application/json").post_res(
+                url=self._custom_oc_url,
+                json={"base64_img": image_b64})
+            if ret:
+                return ret.json().get("result")
 
-        ret = RequestUtils(content_type="application/json").post_res(
-            url=self._ocr_b64_url,
-            json={"base64_img": image_b64})
-        if ret:
-            return ret.json().get("result")
+        if StringUtils.is_string_and_not_empty(self._ocr_b64_url):
+            ret = RequestUtils(content_type="application/json").post_res(
+                url=self._ocr_b64_url,
+                json={"base64_img": image_b64})
+            if ret:
+                return ret.json().get("result")
         return ""
 
     def get_captcha_text_by_baiduocr(self, image_b64=None):
@@ -108,4 +114,4 @@ class OcrHelper:
         """
         判断自建服务端OCR是否可用
         """
-        return StringUtils.is_string_and_not_empty(self._ocr_b64_url)
+        return StringUtils.is_string_and_not_empty(self._custom_oc_url)
