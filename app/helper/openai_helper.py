@@ -1,6 +1,8 @@
 import json
 
+import httpx
 import openai
+from openai import OpenAI
 
 from app.utils import OpenAISessionCache
 from app.utils.commons import singleton
@@ -11,21 +13,36 @@ from config import Config
 class OpenAiHelper:
     _api_key = None
     _api_url = None
+    _proxy = None
 
     def __init__(self):
         self.init_config()
 
     def init_config(self):
         self._api_key = Config().get_config("openai").get("api_key")
-        if self._api_key:
-            openai.api_key = self._api_key
         self._api_url = Config().get_config("openai").get("api_url")
+        self._proxy = Config().get_proxies()
         if self._api_url:
-            openai.api_base = self._api_url + "/v1"
-        else:
-            proxy_conf = Config().get_proxies()
-            if proxy_conf and proxy_conf.get("https"):
-                openai.proxy = proxy_conf.get("https")
+            self._api_url += "/v1"
+        proxies : dict = {}
+        proxy = self._proxy.get("http", None)
+        if proxy:
+            if proxy.startswith("http"):
+                proxies["http://"] = proxy
+            elif "://" not in proxy:
+                proxies["http://"] = "http://" + proxy
+        proxy = self._proxy.get("https", None)
+        if proxy:
+            if proxy.startswith("http"):
+                proxies["https://"] = proxy
+            elif "://" not in proxy:
+                proxies["https://"] = "https://" + proxy
+
+        self._client = OpenAI(
+            base_url=self._api_url,
+            api_key=self._api_key,
+            http_client=httpx.Client(proxies=proxies)
+        )
 
     def get_state(self):
         return True if self._api_key else False
@@ -72,8 +89,8 @@ class OpenAiHelper:
             OpenAISessionCache.set(session_id, seasion)
         return seasion
 
-    @staticmethod
-    def __get_model(message,
+    def __get_model(self,
+                    message,
                     prompt=None,
                     user="NAStool",
                     **kwargs):
@@ -99,7 +116,7 @@ class OpenAiHelper:
                         "content": message
                     }
                 ]
-        return openai.ChatCompletion.create(
+        return self._client.chat.completions.create(
             model="gpt-3.5-turbo",
             user=user,
             messages=message,
@@ -160,11 +177,11 @@ class OpenAiHelper:
             if result:
                 self.__save_session(userid, text)
             return result
-        except openai.error.RateLimitError as e:
+        except openai.RateLimitError as e:
             return f"请求被ChatGPT拒绝了，{str(e)}"
-        except openai.error.APIConnectionError as e:
+        except openai.APIConnectionError as e:
             return "ChatGPT网络连接失败！"
-        except openai.error.Timeout as e:
+        except openai.Timeout as e:
             return "没有接收到ChatGPT的返回消息！"
         except Exception as e:
             return f"请求ChatGPT出现错误：{str(e)}"
