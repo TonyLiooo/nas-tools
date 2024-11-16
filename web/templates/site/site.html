@@ -50,7 +50,7 @@
               {{ SVG.edit() }}
             </a>
             {% if ChromeOk %}
-            <a href="javascript:show_site_cookie_ua_modal('{{ Site.id }}', '{{ Site.name }}', '{{ Site.username }}', '{{ Site.password }}', '{{ Site.two_step_code }}')"
+            <a href="javascript:show_site_cookie_ua_modal('{{ Site.id }}', '{{ Site.name }}')"
                class="btn-action ms-1" title="更新站点Cookie和User-Agent">
               {{ SVG.refresh_dot() }}
             </a>
@@ -497,6 +497,7 @@
   </div>
 </div>
 <script type="text/javascript">
+  var Sites = {{ Sites | tojson }};
   //打开新增站点框
   function show_site_modal() {
     $("#site_id").val('');
@@ -766,12 +767,15 @@
   }
 
   // 显示更新站点Cookie和UA对话框
-  function show_site_cookie_ua_modal(siteid, sitename, username, password, two_step_code){
+  function show_site_cookie_ua_modal(siteid, sitename){
+    let site = Sites.find(site => site.id === Number(siteid) && site.name === sitename);
+    if (site) {
+      $("#cookieua_username").val(site.username);
+      $("#cookieua_password").val(site.password);
+      $("#cookieua_two_step_code").val(site.two_step_code);
+    }
     $("#cookieua_siteid").val(siteid);
     $("#cookieua_modal_title").text("更新站点Cookie - " + sitename);
-    $("#cookieua_username").val(username);
-    $("#cookieua_password").val(password);
-    $("#cookieua_two_step_code").val(two_step_code);
     $("#cookieua_result_div").hide();
     $("#sitecookie_process_bar").attr("style", "width: 0").attr("aria-valuenow", 0);
     $("#sitecookie_process_bar_div").hide();
