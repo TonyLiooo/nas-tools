@@ -18,7 +18,8 @@ from web.backend.web_utils import WebUtils
 
 SEARCH_MEDIA_CACHE = {}
 SEARCH_MEDIA_TYPE = {}
-
+SELECT_TYPE = {}
+PAGE_SIZE = 8
 
 def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, media_type=None):
     """
@@ -168,6 +169,367 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
                                         title=content)
         return 0, ""
 
+def handle_invalid_input(input_str, in_from, user_id):
+    Message().send_channel_msg(channel=in_from,
+                               title="输入有误！",
+                               user_id=user_id)
+    log.warn("【Web】错误的输入值：%s" % input_str)
+
+def handle_page_navigation(input_str, in_from, user_id):
+    if input_str.lower() == "p" or input_str == "上一页":
+        medias = SELECT_TYPE[user_id].get("filtered_list", []) or SEARCH_MEDIA_CACHE.get(user_id, [])
+        if (SELECT_TYPE[user_id]["page"] - 1) * PAGE_SIZE >= 0:
+            SELECT_TYPE[user_id]["page"] -= 1
+            title = SELECT_TYPE[user_id]["title"].format(current_page=SELECT_TYPE[user_id]["page"] + 1)
+            Message().send_channel_list_msg(channel=in_from,
+                                            title=title,
+                                            medias=medias,
+                                            user_id=user_id,
+                                            page=SELECT_TYPE[user_id]["page"],
+                                            page_size=PAGE_SIZE)
+        else:
+            Message().send_channel_msg(channel=in_from,
+                                        title="已经在首页了！",
+                                        user_id=user_id)
+
+    elif input_str == "n" or input_str == "下一页":
+        medias = SELECT_TYPE[user_id].get("filtered_list", []) or SEARCH_MEDIA_CACHE.get(user_id, [])
+        if (SELECT_TYPE[user_id]["page"] + 1) * PAGE_SIZE < len(medias):
+            SELECT_TYPE[user_id]["page"] += 1
+            title = SELECT_TYPE[user_id]["title"].format(current_page=SELECT_TYPE[user_id]["page"] + 1)
+            Message().send_channel_list_msg(channel=in_from,
+                                            title=title,
+                                            medias=medias,
+                                            user_id=user_id,
+                                            page=SELECT_TYPE[user_id]["page"],
+                                            page_size=PAGE_SIZE)
+        else:
+            Message().send_channel_msg(channel=in_from,
+                                        title="已经在最后一页了！",
+                                        user_id=user_id)
+
+def handle_download(input_str, in_from, user_id, user_name):
+    """
+    处理用户的下载请求。
+    """
+    medias = SELECT_TYPE[user_id].get("filtered_list", []) or SEARCH_MEDIA_CACHE.get(user_id, [])
+    if not medias:
+        Message().send_channel_msg(
+            channel=in_from,
+            title="没有可下载的媒体",
+            user_id=user_id
+        )
+        return
+    if input_str == 0:
+        # 批量下载
+        download_items, left_medias = Downloader().batch_download(
+            in_from=in_from,
+            media_list=medias,
+            need_tvs=SELECT_TYPE[user_id].get("no_exists", None),
+            user_name=user_name
+        )
+        if not download_items:
+            log.info("【Searcher】未下载到任何资源")
+            Message().send_channel_msg(
+                channel=in_from,
+                title="【Searcher】未下载到任何资源",
+                user_id=user_id
+            )
+        SELECT_TYPE[user_id] = {}
+        return
+
+    if in_from != SearchType.WEB:
+        choose = PAGE_SIZE * SELECT_TYPE[user_id].get("page", 0) + input_str - 1
+    else:
+        choose = input_str - 1
+
+    if 0 <= choose < len(medias):
+        meta_info = medias[choose]
+        Downloader().download(
+            media_info=meta_info,
+            in_from=in_from,
+            user_name=user_name
+        )
+        SELECT_TYPE[user_id] = {}
+    else:
+        handle_invalid_input(input_str, in_from, user_id)
+
+def process_filters(user_id, in_from):
+    """
+    处理过滤条件，根据用户输入的筛选条件进行过滤。
+    """
+    if SELECT_TYPE[user_id].get("filters"):
+        SELECT_TYPE[user_id]["filter_flag"] = None
+        # 提取筛选条件函数与描述
+        descriptions, filters = zip(*SELECT_TYPE[user_id]["filters"])
+        
+        # 应用筛选器
+        filtered_list = Torrent.filter_media_list(SEARCH_MEDIA_CACHE[user_id], list(filters))
+        if not filtered_list:
+            SELECT_TYPE[user_id]["filters"] = []
+            Message().send_channel_msg(
+                channel=in_from,
+                title="没有筛选到种子信息，如需重新筛选，请重新发“f”或“筛选”。",
+                user_id=user_id
+            )
+            return
+
+        # 更新筛选结果并发送
+        SELECT_TYPE[user_id]["filtered_list"] = filtered_list
+        applied_filters = "\n".join(f"{i+1}. {desc}" for i, desc in enumerate(descriptions))
+        title = f"应用了以下筛选条件：\n{applied_filters}\n\n"
+        title += f"{SELECT_TYPE[user_id]['filtered_list'][0].title} 共筛选出 {len(filtered_list)} 个资源，请回复序号选择下载"
+
+        if in_from != SearchType.WEB and len(filtered_list) > PAGE_SIZE:
+            total_pages = (len(filtered_list) + PAGE_SIZE - 1) // PAGE_SIZE
+            title += f"\n（当前第 {{current_page}} 页, 共 {total_pages} 页）\n"
+            title += " 0: 自动选择\n p: 上一页\n n: 下一页\n f: 继续筛选\n q: 退出"
+        else:
+            title += "\n 0: 自动选择\n f: 继续筛选\n q: 退出"
+
+        SELECT_TYPE[user_id]["page"] = 0
+        SELECT_TYPE[user_id]["title"] = title
+        Message().send_channel_list_msg(
+            channel=in_from,
+            title=title.format(current_page=1),
+            medias=filtered_list,
+            user_id=user_id,
+            page=0,
+            page_size=PAGE_SIZE
+        )
+    else:
+        Message().send_channel_msg(channel=in_from, title="请添加有效的筛选条件", user_id=user_id)
+        prompt_filter_options(in_from, user_id)
+
+def handle_site_filter(input_str, user_id, in_from):
+    """
+    处理站点筛选。
+    """
+    if SELECT_TYPE[user_id].get("filter_flag") == 1:
+        if str(input_str).lower() == "q":
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            prompt_filter_options(in_from, user_id)
+            return
+
+        filter_sites = []
+        indexes = re.split(r"[,， ]", str(input_str).strip())
+        for index in indexes:
+            if index.isdigit() and int(index) in range(len(SELECT_TYPE[user_id]["sites"])):
+                filter_sites.append(SELECT_TYPE[user_id]["sites"][int(index)])
+
+        if filter_sites:
+            description = "站点: " + ", ".join(filter_sites)
+            SELECT_TYPE[user_id]["filters"].append((description, Torrent.is_specific_site(filter_sites)))
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            Message().send_channel_msg(channel=in_from, title=f"站点筛选已应用：{description}", user_id=user_id)
+            prompt_filter_options(in_from, user_id)
+        else:
+            Message().send_channel_msg(channel=in_from, title="请选择有效的站点序号", user_id=user_id)
+    else:
+        SELECT_TYPE[user_id]["filter_flag"] = 1
+        SELECT_TYPE[user_id]["sites"] = list(set(media.site for media in SEARCH_MEDIA_CACHE[user_id]))
+        title = "请输入对应序号选择站点（多个站点请用“,”逗号或“ ”空格隔开）：\n"
+        title += "\n".join(f" {index}. {site}" for index, site in enumerate(SELECT_TYPE[user_id]["sites"])) + "\n q. 返回"
+        Message().send_channel_msg(channel=in_from, title=title, user_id=user_id)
+
+def handle_promotion_filter(input_str, user_id, in_from):
+    """
+    处理促销优先级筛选。
+    """
+    if SELECT_TYPE[user_id].get("filter_flag") == 2:
+        if str(input_str).lower() == "q":
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            prompt_filter_options(in_from, user_id)
+            return
+
+        if re.match(r"^\d+|<\d+|>\d+|\d+-\d+$", str(input_str).strip()):
+            description = f"促销优先级: {input_str}"
+            SELECT_TYPE[user_id]["filters"].append((description, Torrent.has_promotion_priority(str(input_str))))
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            Message().send_channel_msg(channel=in_from, title=f"促销优先级筛选已应用：{description}", user_id=user_id)
+            prompt_filter_options(in_from, user_id)
+        else:
+            Message().send_channel_msg(channel=in_from, title="请输入有效的促销优先级序号", user_id=user_id)
+    else:
+        SELECT_TYPE[user_id]["filter_flag"] = 2
+        promotion_priorities = sorted(set((int(media.get_promotion_priority()), media.get_promotion_string())
+                                          for media in SEARCH_MEDIA_CACHE[user_id]))
+        title = "请输入对应序号添加促销类型，多个类型可用“,”逗号或“ ”空格隔开，亦可“<3”、“>3”、“0-3”（数字越小优先级越高）：\n"
+        title += "\n".join(f" {i[0]}. {i[1]}" for i in promotion_priorities) + "\n q. 返回"
+        Message().send_channel_msg(channel=in_from, title=title, user_id=user_id)
+
+def handle_season_episode_filter(input_str, user_id, in_from):
+    """
+    处理季和集筛选。
+    """
+    if SELECT_TYPE[user_id].get("filter_flag") == 3:
+        if str(input_str).lower() == "q":
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            prompt_filter_options(in_from, user_id)
+            return
+
+        # 更新正则表达式以支持新的格式 S1-3, E1-30
+        pattern = r"(S(\d+)-S?(\d+)|S(\d+))|(E(\d+)-E?(\d+)|E(\d+))"
+        matches = re.findall(pattern, input_str, re.I)
+
+        seasons = set()
+        episodes = set()
+        for match in matches:
+            if match[1] and match[2]:  # S01-S03 或 S1-3
+                seasons.update(list(range(int(match[1]), int(match[2]) + 1)))
+            elif match[3]:  # S01 或 S1
+                seasons.add(int(match[3]))
+            if match[5] and match[6]:  # E1-E30 或 E1-30
+                episodes.update(list(range(int(match[5]), int(match[6]) + 1)))
+            elif match[7]:  # E1
+                episodes.add(int(match[7]))
+
+        if seasons or episodes:
+            seasons = sorted(seasons)
+            episodes = sorted(episodes)
+
+            season_desc = ""
+            episode_desc = ""
+
+            if seasons:
+                season_desc = f"S{seasons[0]:02d}-S{seasons[-1]:02d}" if len(seasons) > 1 else f"S{seasons[0]:02d}"
+            if episodes:
+                episode_desc = f"E{episodes[0]:02d}-E{episodes[-1]:02d}" if len(episodes) > 1 else f"E{episodes[0]:02d}"
+                
+            if season_desc and episode_desc:
+                filter_desc = f"季: {season_desc}，集: {episode_desc}"
+            elif season_desc:
+                filter_desc = f"季: {season_desc}"
+            elif episode_desc:
+                filter_desc = f"集: {episode_desc}"
+
+            SELECT_TYPE[user_id]["filters"].append((filter_desc, Torrent.filter_by_season_and_episode(seasons, episodes)))
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            Message().send_channel_msg(channel=in_from, title=f"筛选已应用：{filter_desc}", user_id=user_id)
+            prompt_filter_options(in_from, user_id)
+        else:
+            Message().send_channel_msg(channel=in_from, title="请输入有效的季和集格式", user_id=user_id)
+    else:
+        SELECT_TYPE[user_id]["filter_flag"] = 3
+        title = "请输入季和集（如：S01-S03 E1-E30, S1-3 E1-30, S01 E1,E2,E3）：\n q. 返回"
+        Message().send_channel_msg(channel=in_from, title=title, user_id=user_id)
+
+def remove_filter(input_str, user_id, in_from):
+    """
+    移除已添加的筛选条件。
+    """
+    # 检查是否存在筛选条件
+    if not SELECT_TYPE[user_id].get("filters"):
+        Message().send_channel_msg(channel=in_from, title="当前没有筛选条件", user_id=user_id)
+        prompt_filter_options(in_from, user_id)
+        return
+
+    if SELECT_TYPE[user_id].get("filter_flag") == 'v':
+        to_remove = []
+        if str(input_str).lower() == "a":
+            removed_conditions = [desc for desc, _ in SELECT_TYPE[user_id]["filters"]]
+            SELECT_TYPE[user_id]["filters"] = []
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            removed_message = "、".join(removed_conditions)
+            Message().send_channel_msg(
+                channel=in_from, 
+                title=f"已移除全部筛选条件：{removed_message}",
+                user_id=user_id
+            )
+            prompt_filter_options(in_from, user_id)
+        elif str(input_str).lower() == "q":
+            SELECT_TYPE[user_id]["filter_flag"] = "Select"
+            prompt_filter_options(in_from, user_id)
+        else:
+            indexes = re.split(r"[,， ]", str(input_str).strip())
+            for index in indexes:
+                if index.isdigit() and int(index) in range(len(SELECT_TYPE[user_id]["filters"])):
+                    to_remove.append(int(index))
+            if to_remove:
+                to_remove = sorted(to_remove, reverse=True)  # 从后往前移除，避免索引混乱
+                removed_conditions = [SELECT_TYPE[user_id]["filters"][idx][0] for idx in to_remove]
+                for idx in to_remove:
+                    SELECT_TYPE[user_id]["filters"].pop(idx)
+                removed_message = "、".join(removed_conditions)
+                Message().send_channel_msg(
+                    channel=in_from,
+                    title=f"已移除以下筛选条件：{removed_message}",
+                    user_id=user_id
+                )
+                SELECT_TYPE[user_id]["filter_flag"] = "Select"
+                prompt_filter_options(in_from, user_id)
+            else:
+                Message().send_channel_msg(channel=in_from, title="请输入有效的序号进行移除", user_id=user_id)
+    else:
+        SELECT_TYPE[user_id]["filter_flag"] = 'v'
+        title = "已添加如下筛选条件，输入对应序号可移除条件（多个条件请用“,”逗号或“ ”空格隔开）：\n"
+        title += "\n".join(f" {index}. {filter_desc}" for index, (filter_desc, _) in enumerate(SELECT_TYPE[user_id]["filters"]))
+        title += "\n a. 清空所有条件\n" + " q. 返回"
+        Message().send_channel_msg(channel=in_from, title=title, user_id=user_id)
+
+def exit_filter(user_id, in_from):
+    """
+    退出筛选。
+    """
+    SELECT_TYPE[user_id]["filter_flag"] = None
+    SELECT_TYPE[user_id]["filters"] = []
+    SELECT_TYPE[user_id]["filtered_list"] = []
+    SELECT_TYPE[user_id]["page"] = 0
+    SELECT_TYPE[user_id]["title"] = SELECT_TYPE[user_id].get("title2",SELECT_TYPE[user_id].get("title"))
+    Message().send_channel_msg(channel=in_from,
+                                title="已退出筛选，可以继需选择需下载的资源。",
+                                user_id=user_id)
+    title = SELECT_TYPE[user_id]["title"].format(current_page=SELECT_TYPE[user_id]["page"]+1)
+    Message().send_channel_list_msg(channel=in_from,
+                                    title=title,
+                                    medias=SEARCH_MEDIA_CACHE[user_id],
+                                    user_id=user_id,
+                                    page=SELECT_TYPE[user_id]["page"],
+                                    page_size=PAGE_SIZE)
+
+def prompt_filter_options(in_from, user_id):
+    """
+    提示用户选择筛选操作。
+    """
+    SELECT_TYPE[user_id]["filter_flag"] = "Select"
+    if not SELECT_TYPE[user_id].get("filters"):
+        SELECT_TYPE[user_id]["filters"] = []
+    Message().send_channel_msg(channel=in_from,
+                            title="请输入对应序号添加筛选：\n"
+                                    " 0. 开始筛选\n"
+                                    " 1. 筛选站点\n"
+                                    " 2. 筛选促销\n"
+                                    " 3. 筛选季和集\n"
+                                    " v. 查看或移除筛选\n"
+                                    " q. 退出并清空筛选",
+                            user_id=user_id)
+
+def handle_filter(input_str, in_from, user_id):
+
+    filter_flag = SELECT_TYPE[user_id].get("filter_flag")
+
+    if input_str.isdigit():
+        input_str = int(input_str)
+    else:
+        input_str = input_str.lower()
+
+    if filter_flag == "Select":
+        filter_flag = input_str
+
+    if filter_flag == 0:  # 开始筛选
+        process_filters(user_id, in_from)
+    elif filter_flag == 1:  # 站点筛选
+        handle_site_filter(input_str, user_id, in_from)
+    elif filter_flag == 2:  # 促销优先级筛选
+        handle_promotion_filter(input_str, user_id, in_from)
+    elif filter_flag == 3:  # 季和集筛选
+        handle_season_episode_filter(input_str, user_id, in_from)
+    elif filter_flag == 'v':  # 查看或移除筛选
+        remove_filter(input_str, user_id, in_from)
+    elif filter_flag == 'q':  # 退出筛选
+        exit_filter(user_id, in_from)
+    else:
+        prompt_filter_options(in_from, user_id) # 默认情况，提示用户选择筛选选项
 
 def search_media_by_message(input_str, in_from: SearchType, user_id, user_name=None):
     """
@@ -178,63 +540,50 @@ def search_media_by_message(input_str, in_from: SearchType, user_id, user_name=N
     :param user_name: 用户名称
     :return: 请求的资源是否全部下载完整、请求的文本对应识别出来的媒体信息、请求的资源如果是剧集，则返回下载后仍然缺失的季集信息
     """
-    global SEARCH_MEDIA_TYPE
-    global SEARCH_MEDIA_CACHE
-
     if not input_str:
         log.info("【Searcher】搜索关键字有误！")
         return
     else:
         input_str = str(input_str).strip()
-    # 如果是数字，表示选择项
-    if input_str.isdigit() and int(input_str) < 10:
-        # 获取之前保存的可选项
-        choose = int(input_str) - 1
-        if not SEARCH_MEDIA_CACHE.get(user_id) or \
-                choose < 0 or choose >= len(SEARCH_MEDIA_CACHE.get(user_id)):
+    if SELECT_TYPE.get(user_id):
+        # 如果是数字，表示选择项
+        if input_str.isdigit() and SELECT_TYPE[user_id]["type"] == "search":
+            # Handle search type input
+            choose = PAGE_SIZE * SELECT_TYPE[user_id]["page"] + int(input_str) - 1
+            if not SEARCH_MEDIA_CACHE.get(user_id) or \
+                    choose < 0 or choose >= len(SEARCH_MEDIA_CACHE.get(user_id)):
+                handle_invalid_input(input_str, in_from, user_id)
+                return
+            media_info = SEARCH_MEDIA_CACHE[user_id][choose]
+            if not SEARCH_MEDIA_TYPE.get(user_id) or SEARCH_MEDIA_TYPE.get(user_id) == "SEARCH":
+                # Search for additional media info
+                __search_media(in_from=in_from, media_info=media_info, user_id=user_id, user_name=user_name)
+            else:
+                # Subscription
+                __rss_media(in_from=in_from, media_info=media_info, user_id=user_id, user_name=user_name)
+
+        elif SELECT_TYPE[user_id]["type"]=="download" and (input_str.lower() in ["f", "筛选", "过滤"] or SELECT_TYPE[user_id].get("filter_flag")):
+            # Handle filter input
+            handle_filter(input_str, in_from, user_id)
+            
+        elif input_str.isdigit() and SELECT_TYPE[user_id]["type"] == "download":
+            # Handle download type input
+            handle_download(int(input_str), in_from, user_id, user_name)
+        
+        elif in_from != SearchType.WEB and input_str.lower() in ["p", "上一页", "n", "下一页"]:
+            # Handle page navigation input
+            handle_page_navigation(input_str, in_from, user_id)
+        
+        elif input_str=="q" or input_str=="退出":
+            SELECT_TYPE[user_id] = {}
             Message().send_channel_msg(channel=in_from,
-                                       title="输入有误！",
-                                       user_id=user_id)
-            log.warn("【Web】错误的输入值：%s" % input_str)
-            return
-        media_info = SEARCH_MEDIA_CACHE[user_id][choose]
-        if not SEARCH_MEDIA_TYPE.get(user_id) \
-                or SEARCH_MEDIA_TYPE.get(user_id) == "SEARCH":
-            # 如果是豆瓣数据，需要重新查询TMDB的数据
-            if media_info.douban_id:
-                _title = media_info.get_title_string()
-                # 先从网页抓取（含TMDBID）
-                doubaninfo = DouBan().get_media_detail_from_web(media_info.douban_id)
-                if doubaninfo and doubaninfo.get("imdbid"):
-                    tmdbid = Media().get_tmdbid_by_imdbid(doubaninfo.get("imdbid"))
-                    if tmdbid:
-                        # 按IMDBID查询TMDB
-                        media_info.set_tmdb_info(Media().get_tmdb_info(mtype=media_info.type, tmdbid=tmdbid))
-                        media_info.imdb_id = doubaninfo.get("imdbid")
-                else:
-                    search_episode = media_info.begin_episode
-                    media_info = Media().get_media_info(title="%s %s" % (media_info.title, media_info.year),
-                                                        mtype=media_info.type,
-                                                        strict=True)
-                    media_info.begin_episode = search_episode
-                if not media_info or not media_info.tmdb_info:
-                    Message().send_channel_msg(channel=in_from,
-                                               title="%s 从TMDB查询不到媒体信息！" % _title,
-                                               user_id=user_id)
-                    return
-            # 搜索
-            __search_media(in_from=in_from,
-                           media_info=media_info,
-                           user_id=user_id,
-                           user_name=user_name)
+                                        title="已退出选择",
+                                        user_id=user_id)
         else:
-            # 订阅
-            __rss_media(in_from=in_from,
-                        media_info=media_info,
-                        user_id=user_id,
-                        user_name=user_name)
+            handle_invalid_input(input_str, in_from, user_id)
     # 接收到文本
     else:
+        SELECT_TYPE[user_id] = {}
         if input_str.startswith("订阅"):
             # 订阅
             SEARCH_MEDIA_TYPE[user_id] = "SUBSCRIBE"
@@ -392,12 +741,21 @@ def search_media_by_message(input_str, in_from: SearchType, user_id, user_name=N
                                 user_id=user_id,
                                 user_name=user_name)
             else:
+                title = "共找到 {total_items} 条相关信息，请回复序号选择搜索".format(
+                    total_items=len(SEARCH_MEDIA_CACHE[user_id])
+                )
+                if in_from != SearchType.WEB and len(SEARCH_MEDIA_CACHE[user_id]) > PAGE_SIZE:
+                    total_pages = (len(SEARCH_MEDIA_CACHE[user_id]) + PAGE_SIZE - 1) // PAGE_SIZE
+                    title += "\n（当前第 {current_page} 页, 共 {total_pages} 页；p: 上一页 n: 下一页）"
+                    title = title.format(current_page="{current_page}", total_pages=total_pages)
+                SELECT_TYPE[user_id]={"type":"search", "page":0, "title":title}
                 # 发送消息通知选择
                 Message().send_channel_list_msg(channel=in_from,
-                                                title="共找到%s条相关信息，请回复对应序号" % len(
-                                                    SEARCH_MEDIA_CACHE[user_id]),
+                                                title=title.format(current_page=SELECT_TYPE[user_id]["page"]+1),
                                                 medias=SEARCH_MEDIA_CACHE[user_id],
-                                                user_id=user_id)
+                                                user_id=user_id,
+                                                page=SELECT_TYPE[user_id]["page"],
+                                                page_size=PAGE_SIZE)
 
 
 def __search_media(in_from, media_info, user_id, user_name=None):
@@ -418,7 +776,7 @@ def __search_media(in_from, media_info, user_id, user_name=None):
     Message().send_channel_msg(channel=in_from,
                                title="开始搜索 %s ..." % media_info.title,
                                user_id=user_id)
-    search_result, no_exists, search_count, download_count = Searcher().search_one_media(media_info=media_info,
+    search_result, no_exists, search_count, download_count, media_list = Searcher().search_one_media(media_info=media_info,
                                                                                          in_from=in_from,
                                                                                          no_exists=no_exists,
                                                                                          sites=media_info.search_sites,
@@ -431,17 +789,34 @@ def __search_media(in_from, media_info, user_id, user_name=None):
     else:
         # 搜索到了但是没开自动下载
         if download_count is None:
-            Message().send_channel_msg(channel=in_from,
-                                       title="%s 共搜索到%s个资源，点击选择下载" % (media_info.title, search_count),
-                                       image=media_info.get_message_image(),
-                                       url="search",
-                                       user_id=user_id)
+            title = "{media_title} 共找到 {search_count} 个资源，请回复序号选择下载".format(
+                media_title=media_info.title,
+                search_count=search_count
+            )
+            pt = Config().get_config('pt')
+            if pt:
+                download_order = pt.get("download_order")
+            media_list = Torrent.sort_media_list(media_list, download_order)
+            SEARCH_MEDIA_CACHE[user_id] = media_list
+            if in_from != SearchType.WEB and len(SEARCH_MEDIA_CACHE[user_id]) > PAGE_SIZE:
+                total_pages = (len(SEARCH_MEDIA_CACHE[user_id]) + PAGE_SIZE - 1) // PAGE_SIZE
+                title += "\n（当前第 {current_page} 页, 共 {total_pages} 页）\n 0: 自动选择\n p: 上一页\n n: 下一页\n f: 筛选\n q: 退出"
+                title = title.format(current_page="{current_page}", total_pages=total_pages)
+            else:
+                title += "\n 0: 自动选择\n f: 筛选\n q: 退出"
+            SELECT_TYPE[user_id]={"type":"download", "page":0, "title":title, "title2":title, "no_exists":no_exists}
+            Message().send_channel_list_msg(channel=in_from,
+                                            title=title.format(current_page=SELECT_TYPE[user_id]["page"]+1),
+                                            medias=SEARCH_MEDIA_CACHE[user_id],
+                                            user_id=user_id,
+                                            page=SELECT_TYPE[user_id]["page"],
+                                            page_size=PAGE_SIZE)
             return
         else:
             # 搜索到了但是没下载到数据
             if download_count == 0:
                 Message().send_channel_msg(channel=in_from,
-                                           title="%s 共搜索到%s个结果，但没有下载到任何资源" % (
+                                           title="%s 共搜索到 %s 个结果，但没有下载到任何资源" % (
                                                media_info.title, search_count),
                                            user_id=user_id)
     # 没有下载完成，且打开了自动添加订阅

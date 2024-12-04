@@ -9,7 +9,7 @@ from app.downloader import Downloader
 from app.media import Media
 from app.helper import ProgressHelper
 from app.utils.types import SearchType, EventType, ProgressKey
-
+from typing import Union
 
 @singleton
 class Searcher:
@@ -37,7 +37,7 @@ class Searcher:
         self._search_auto = Config().get_config("pt").get('search_auto', True)
 
     def search_medias(self,
-                      key_word: [str, list],
+                      key_word: Union[str, list],
                       filter_args: dict,
                       match_media=None,
                       in_from: SearchType = None):
@@ -86,7 +86,7 @@ class Searcher:
                  下载到的结果数量，如为None则表示未开启自动下载
         """
         if not media_info:
-            return None, {}, 0, 0
+            return None, {}, 0, 0, {}
         # 进度计数重置
         self.progress.start(ProgressKey.Search)
         # 查找的季
@@ -159,7 +159,7 @@ class Searcher:
 
         if len(media_list) == 0:
             log.info("【Searcher】%s 未搜索到任何资源" % second_search_name)
-            return None, no_exists, 0, 0
+            return None, no_exists, 0, 0, {}
         else:
             if in_from in self.message.get_search_types():
                 # 保存搜索记录
@@ -172,9 +172,10 @@ class Searcher:
                                     reverse=True)
                 # 插入数据库
                 self.insert_search_results(media_list)
-                # 微信未开自动下载时返回
-                if not self._search_auto:
-                    return None, no_exists, len(media_list), None
+
+            # 微信未开自动下载时返回
+            if not self._search_auto:
+                return None, no_exists, len(media_list), None, media_list
             # 择优下载
             download_items, left_medias = self.downloader.batch_download(in_from=in_from,
                                                                          media_list=media_list,
@@ -183,15 +184,15 @@ class Searcher:
             # 统计下载情况，下全了返回True，没下全返回False
             if not download_items:
                 log.info("【Searcher】%s 未下载到资源" % media_info.title)
-                return None, left_medias, len(media_list), 0
+                return None, left_medias, len(media_list), 0, media_list
             else:
                 log.info("【Searcher】实际下载了 %s 个资源" % len(download_items))
                 # 还有剩下的缺失，说明没下完，返回False
                 if left_medias:
-                    return None, left_medias, len(media_list), len(download_items)
+                    return None, left_medias, len(media_list), len(download_items), media_list
                 # 全部下完了
                 else:
-                    return download_items[0], no_exists, len(media_list), len(download_items)
+                    return download_items[0], no_exists, len(media_list), len(download_items), media_list
 
     def get_search_result_by_id(self, dl_id):
         """

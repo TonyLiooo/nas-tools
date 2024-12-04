@@ -17,6 +17,7 @@ from app.utils.types import MediaType
 from config import Config
 
 import asyncio
+from typing import List, Callable
 
 
 class Torrent:
@@ -256,49 +257,137 @@ class Torrent:
         return target
 
     @staticmethod
+    def filter_media_list(media_list: List, filters: List[Callable]) -> List:
+        """
+        筛选媒体列表
+        :param media_list: 原始媒体列表
+        :param filters: 筛选条件列表，每个条件是一个函数，接受媒体对象，返回布尔值
+        :return: 筛选后的媒体列表
+        """
+        for filter_func in filters:
+            media_list = filter(filter_func, media_list)
+        return list(media_list)
+
+    @staticmethod
+    def has_promotion_priority(priority_filter: str) -> Callable:
+        """
+        根据输入的优先级筛选条件筛选媒体列表。
+        :param priority_filter: 支持 "<3"、">3"、"0-3" 等形式。
+        :return: 返回筛选条件的函数。
+        """
+        def filter_by_priority(media):
+            priority = media.get_promotion_priority()
+            try:
+                if "-" in priority_filter:
+                    # 区间筛选，格式如 "0-3"
+                    min_priority, max_priority = map(int, priority_filter.split("-"))
+                    return min_priority <= priority <= max_priority
+                elif priority_filter.startswith("<"):
+                    # 小于某个值
+                    max_priority = int(priority_filter[1:])
+                    return priority < max_priority
+                elif priority_filter.startswith(">"):
+                    # 大于某个值
+                    min_priority = int(priority_filter[1:])
+                    return priority > min_priority
+                else:
+                    # 等于某个值（默认）
+                    return priority == int(priority_filter)
+            except ValueError:
+                # 如果解析失败，不筛选任何媒体
+                return False
+
+        return filter_by_priority
+
+    @staticmethod
+    def is_specific_site(site_list: list) -> Callable:
+        """筛选指定站点的媒体"""
+        return lambda media: media.site in site_list
+
+    @staticmethod
+    def filter_by_season_and_episode(season_list: List[int], episode_list: List[int]) -> Callable:
+        """
+        返回基于季和集的筛选函数
+        :param season_list: 要匹配的季列表。如果为空，则表示不限制季。
+        :param episode_list: 要匹配的集列表。如果为空，则表示不限制集。
+        :return: 一个筛选函数，接受媒体对象，返回布尔值
+        """
+        def filter_func(media):
+            media_seasons = set(media.get_season_list())
+            media_episodes = set(media.get_episode_list())
+
+            # 如果季列表非空，检查交集；否则不限制
+            if media_seasons and season_list and not media_seasons.intersection(season_list):
+                return False
+
+            # 如果集列表非空，检查交集；否则不限制
+            if media_episodes and episode_list and not media_episodes.intersection(episode_list):
+                return False
+
+            return True
+
+        return filter_func
+    
+    @staticmethod
+    def sort_media_list(media_list, download_order=None):
+        """
+        排序媒体列表
+        """
+        # 排序函数，标题、站点、资源类型、做种数量
+        def get_sort_tuple(media):
+            season = media.get_season_string() or "ZZZ"
+            episode = media.get_episode_string() or "ZZZ"
+            # 排序元组：标题、资源类型、站点、做种、季集
+            if download_order == "seeder":
+                return (
+                    media.title,                            # 按标题排序
+                    (season, episode),                      # 按季、集排序
+                    int(media.res_order),                   # 按资源优先级排序
+                    int(media.get_promotion_priority()),    # 按促销优先级排序
+                    -int(media.seeders),                    # 按做种人数降序
+                    -int(media.peers),                      # 按下载人数降序
+                    int(media.site_order),                  # 按站点优先级排序
+                )
+            else:
+                return (
+                    media.title,                            # 按标题排序
+                    (season, episode),                      # 按季、集排序
+                    int(media.res_order),                   # 按资源优先级排序
+                    int(media.get_promotion_priority()),    # 按促销优先级排序
+                    int(media.site_order),                  # 按站点优先级排序
+                    -int(media.seeders),                    # 按做种人数降序
+                    -int(media.peers),                      # 按下载人数降序
+                )
+        return sorted(media_list, key=get_sort_tuple, reverse=True)
+    
+    @staticmethod
     def get_download_list(media_list, download_order):
         """
         对媒体信息进行排序、去重
         """
         if not media_list:
             return []
+        
+        # 按排序规则对媒体列表排序
+        media_list = Torrent.sort_media_list(media_list, download_order)
 
-        # 排序函数，标题、站点、资源类型、做种数量
-        def get_sort_str(x):
-            season_len = str(len(x.get_season_list())).rjust(2, '0')
-            episode_len = str(len(x.get_episode_list())).rjust(4, '0')
-            # 排序：标题、资源类型、站点、做种、季集
-            if download_order == "seeder":
-                return "%s%s%s%s%s" % (str(x.title).ljust(100, ' '),
-                                       str(x.res_order).rjust(3, '0'),
-                                       str(x.seeders).rjust(10, '0'),
-                                       str(x.site_order).rjust(3, '0'),
-                                       "%s%s" % (season_len, episode_len))
-            else:
-                return "%s%s%s%s%s" % (str(x.title).ljust(100, ' '),
-                                       str(x.res_order).rjust(3, '0'),
-                                       str(x.site_order).rjust(3, '0'),
-                                       str(x.seeders).rjust(10, '0'),
-                                       "%s%s" % (season_len, episode_len))
+        # 去重处理
+        unique_media_list = []
+        seen_media_names = set()
 
-        # 匹配的资源中排序分组选最好的一个下载
-        # 按站点顺序、资源匹配顺序、做种人数下载数逆序排序
-        media_list = sorted(media_list, key=lambda x: get_sort_str(x), reverse=True)
-        # 控重
-        can_download_list_item = []
-        can_download_list = []
-        # 排序后重新加入数组，按真实名称控重，即只取每个名称的第一个
-        for t_item in media_list:
-            # 控重的主链是名称、年份、季、集
-            if t_item.type != MediaType.MOVIE:
-                media_name = "%s%s" % (t_item.get_title_string(),
-                                       t_item.get_season_episode_string())
+        for media in media_list:
+            # 控重的主键是标题 + 季集（如果有）
+            if media.type == MediaType.MOVIE:
+                media_name = media.get_title_string()
             else:
-                media_name = t_item.get_title_string()
-            if media_name not in can_download_list:
-                can_download_list.append(media_name)
-                can_download_list_item.append(t_item)
-        return can_download_list_item
+                media_name = f"{media.get_title_string()}{media.get_season_episode_string()}"
+
+            # 避免重复添加
+            if media_name not in seen_media_names:
+                seen_media_names.add(media_name)
+                unique_media_list.append(media)
+
+        return unique_media_list
 
     @staticmethod
     def magent2torrent(url, path, timeout=20):

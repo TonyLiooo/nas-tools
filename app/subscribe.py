@@ -758,7 +758,7 @@ class Subscribe:
                     "exclude": rss_info.get('filter_exclude'),
                     "site": rss_info.get("search_sites")
                 }
-                search_result, _, _, _ = self.searcher.search_one_media(
+                search_result, _, _, _, _ = self.searcher.search_one_media(
                     media_info=media_info,
                     in_from=SearchType.RSS,
                     no_exists=no_exists,
@@ -891,7 +891,7 @@ class Subscribe:
                     "exclude": rss_info.get('filter_exclude'),
                     "site": rss_info.get("search_sites")
                 }
-                search_result, no_exists, _, _ = self.searcher.search_one_media(
+                search_result, no_exists, _, _, _ = self.searcher.search_one_media(
                     media_info=media_info,
                     in_from=SearchType.RSS,
                     no_exists=rss_no_exists,

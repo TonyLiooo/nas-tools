@@ -3,7 +3,12 @@ import threading
 from datetime import datetime
 
 from app.message.client._base import _IMessageClient
-from app.utils import RequestUtils, ExceptionUtils, StringUtils
+from app.utils import RequestUtils, ExceptionUtils, StringUtils, NumberUtils
+from urllib.parse import urljoin
+import log
+from typing import List
+
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 lock = threading.Lock()
 
@@ -13,10 +18,9 @@ class WeChat(_IMessageClient):
 
     _instance = None
     _access_token = None
-    _expires_in = None
-    _access_token_time = None
-    _default_proxy = False
-    _default_proxy_url = ''
+    _expires_in: int = None
+    _access_token_time: datetime = None
+    _proxy = False
     _client_config = {}
     _corpid = None
     _corpsecret = None
@@ -25,6 +29,15 @@ class WeChat(_IMessageClient):
 
     _send_msg_url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s"
     _token_url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s"
+
+    # 企业微信发送消息URL
+    _send_msg_url = "/cgi-bin/message/send?access_token={access_token}"
+    # 企业微信获取TokenURL
+    _token_url = "/cgi-bin/gettoken?corpid={corpid}&corpsecret={corpsecret}"
+    # 企业微信创建菜单URL
+    _create_menu_url = "/cgi-bin/menu/create?access_token={access_token}&agentid={agentid}"
+    # 企业微信删除菜单URL
+    _delete_menu_url = "/cgi-bin/menu/delete?access_token={access_token}&agentid={agentid}"
 
     def __init__(self, config):
         self._client_config = config
@@ -36,14 +49,13 @@ class WeChat(_IMessageClient):
             self._corpid = self._client_config.get('corpid')
             self._corpsecret = self._client_config.get('corpsecret')
             self._agent_id = self._client_config.get('agentid')
-            self._default_proxy = self._client_config.get('default_proxy')
-        if self._default_proxy:
-            if isinstance(self._default_proxy, bool) and StringUtils.is_string_and_not_empty(self._default_proxy_url):
-                self._send_msg_url = f"{self._default_proxy_url}/cgi-bin/message/send?access_token=%s"
-                self._token_url = f"{self._default_proxy_url}/cgi-bin/gettoken?corpid=%s&corpsecret=%s"
-            else:
-                self._send_msg_url = f"{self._default_proxy}/cgi-bin/message/send?access_token=%s"
-                self._token_url = f"{self._default_proxy}/cgi-bin/gettoken?corpid=%s&corpsecret=%s"
+            self._proxy = self._client_config.get('default_proxy') or "https://qyapi.weixin.qq.com"
+        
+            self._send_msg_url = urljoin(self._proxy, self._send_msg_url)
+            self._token_url = urljoin(self._proxy, self._token_url)
+            self._create_menu_url = urljoin(self._proxy, self._create_menu_url)
+            self._delete_menu_url = urljoin(self._proxy, self._delete_menu_url)
+
         if self._corpid and self._corpsecret and self._agent_id:
             self.__get_access_token()
 
@@ -51,6 +63,62 @@ class WeChat(_IMessageClient):
     def match(cls, ctype):
         return True if ctype == cls.schema else False
 
+    @staticmethod
+    def __split_content(content: str, max_bytes: int = 2048) -> List[str]:
+        """
+        将内容分块为不超过 max_bytes 字节的块
+        :param content: 待拆分的内容
+        :param max_bytes: 最大字节数
+        :return: 分块后的内容列表
+        """
+        content_chunks = []
+        current_chunk = bytearray()
+
+        for line in content.splitlines():
+            encoded_line = (line + "\n").encode("utf-8")
+            line_length = len(encoded_line)
+
+            if line_length > max_bytes:
+                # 在处理长行之前，先将 current_chunk 添加到 content_chunks
+                if current_chunk:
+                    content_chunks.append(current_chunk.decode("utf-8", errors="replace").strip())
+                    current_chunk = bytearray()
+
+                # 处理长行，拆分为多个不超过 max_bytes 的块
+                start = 0
+                while start < line_length:
+                    end = start + max_bytes  # 不再需要为 "..." 预留空间
+                    if end >= line_length:
+                        end = line_length
+                    else:
+                        # 调整以避免拆分多字节字符
+                        while end > start and (encoded_line[end] & 0xC0) == 0x80:
+                            end -= 1
+                        if end == start:
+                            # 单个字符超过了 max_bytes，强制包含整个字符
+                            end = start + 1
+                            while end < line_length and (encoded_line[end] & 0xC0) == 0x80:
+                                end += 1
+                    truncated_line = encoded_line[start:end].decode("utf-8", errors="replace")
+                    content_chunks.append(truncated_line.strip())
+                    start = end
+                continue  # 继续处理下一行
+
+            # 检查添加当前行后是否会超过 max_bytes
+            if len(current_chunk) + line_length > max_bytes:
+                # 将 current_chunk 添加到 content_chunks
+                content_chunks.append(current_chunk.decode("utf-8", errors="replace").strip())
+                current_chunk = bytearray()
+
+            # 将当前行添加到 current_chunk
+            current_chunk += encoded_line
+
+        # 处理剩余的 current_chunk
+        if current_chunk:
+            content_chunks.append(current_chunk.decode("utf-8", errors="replace").strip())
+
+        return content_chunks
+    
     def __get_access_token(self, force=False):
         """
         获取微信Token
@@ -67,7 +135,7 @@ class WeChat(_IMessageClient):
             if not self._corpid or not self._corpsecret:
                 return None
             try:
-                token_url = self._token_url % (self._corpid, self._corpsecret)
+                token_url = self._token_url.format(corpid=self._corpid, corpsecret=self._corpsecret)
                 res = RequestUtils().get_res(token_url)
                 if res:
                     ret_json = res.json()
@@ -89,29 +157,33 @@ class WeChat(_IMessageClient):
         :param url: 点击消息跳转URL
         :return: 发送状态，错误信息
         """
-        if not self.__get_access_token():
-            return False, "参数未配置或配置不正确"
-        message_url = self._send_msg_url % self.__get_access_token()
         if text:
-            conent = "%s\n%s" % (title, text.replace("\n\n", "\n"))
+            content = "%s\n%s" % (title, text.replace("\n\n", "\n"))
         else:
-            conent = title
+            content = title
         if url:
-            conent = f"{conent}\n\n<a href='{url}'>查看详情</a>"
+            content = f"{content}\n\n<a href='{url}'>查看详情</a>"
         if not user_id:
             user_id = "@all"
-        req_json = {
-            "touser": user_id,
-            "msgtype": "text",
-            "agentid": self._agent_id,
-            "text": {
-                "content": conent
-            },
-            "safe": 0,
-            "enable_id_trans": 0,
-            "enable_duplicate_check": 0
-        }
-        return self.__post_request(message_url, req_json)
+        # 分块处理逻辑
+        content_chunks = self.__split_content(content)
+        # 逐块发送消息
+        for chunk in content_chunks:
+            req_json = {
+                "touser": user_id,
+                "msgtype": "text",
+                "agentid": self._agent_id,
+                "text": {
+                    "content": chunk
+                },
+                "safe": 0,
+                "enable_id_trans": 0,
+                "enable_duplicate_check": 0
+            }
+            result, msg = self.__post_request(self._send_msg_url, req_json)
+            if not result:
+                return False, msg
+        return True, f"发送消息成功"
 
     def __send_image_message(self, title, text, image_url, url, user_id=None):
         """
@@ -123,9 +195,6 @@ class WeChat(_IMessageClient):
         :param user_id: 消息发送对象的ID，为空则发给所有人
         :return: 发送状态，错误信息
         """
-        if not self.__get_access_token():
-            return False, "获取微信access_token失败，请检查参数配置"
-        message_url = self._send_msg_url % self.__get_access_token()
         if text:
             text = text.replace("\n\n", "\n")
         if not user_id:
@@ -145,7 +214,8 @@ class WeChat(_IMessageClient):
                 ]
             }
         }
-        return self.__post_request(message_url, req_json)
+        return self.__post_request(self._send_msg_url, req_json)
+
 
     def send_msg(self, title, text="", image="", url="", user_id=None):
         """
@@ -157,6 +227,8 @@ class WeChat(_IMessageClient):
         :param user_id: 消息发送对象的ID，为空则发给所有人
         :return: 发送状态，错误信息
         """
+        if not self.__get_access_token():
+            return False, "获取微信access_token失败，请检查参数配置"
         if not title and not text:
             return False, "标题和内容不能同时为空"
         if image:
@@ -173,21 +245,34 @@ class WeChat(_IMessageClient):
             return False, "参数未配置或配置不正确"
         if not isinstance(medias, list):
             return False, "数据错误"
-        message_url = self._send_msg_url % self.__get_access_token()
         if not user_id:
             user_id = "@all"
         articles = []
         index = 1
         for media in medias:
-            if media.get_vote_string():
-                title = f"{index}. {media.get_title_string()}\n{media.get_type_string()}，{media.get_vote_string()}"
+            if index > 8:
+                break
+            if not media.site:
+                media_title = f"{index}. {media.get_title_string()}\n"  \
+                            f"{media.get_type_string()}，"  \
+                            f"{media.get_vote_string()}"
             else:
-                title = f"{index}. {media.get_title_string()}\n{media.get_type_string()}"
+                media_title = f"{index}.【{media.site}】"  \
+                            f"{media.get_season_episode_string()} " \
+                            f"{media.get_effect_string()} "  \
+                            f"{media.get_video_encode_string()} "   \
+                            f"{media.get_audio_encode_string()} "   \
+                            f"{media.get_resource_team_string()} "  \
+                            f"{NumberUtils.get_size_gb(media.size):.2f}G " \
+                            f"{media.get_volume_factor_string()} "  \
+                            f"{media.seeders}↑ " \
+                            f"{media.peers}↓ "
+                
             articles.append({
-                "title": title,
+                "title": media_title.replace("  "," ").strip(",，").strip(),
                 "description": "",
-                "picurl": media.get_message_image() if index == 1 else media.get_poster_image(),
-                "url": media.get_detail_url()
+                "picurl": media.get_message_image() if index == 1 else media.get_poster_image() if not media.site else "",
+                "url": media.get_detail_url() if not media.site else media.page_url
             })
             index += 1
         req_json = {
@@ -198,28 +283,39 @@ class WeChat(_IMessageClient):
                 "articles": articles
             }
         }
-        return self.__post_request(message_url, req_json)
+        state, ret_msg = self.__post_request(self._send_msg_url, req_json)
+        if state and title:
+            self.send_msg(title=title, user_id=user_id)
+        return state, ret_msg
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=3, max=30))
+    def _send_request_with_retry(self, message_url, req_json):
+        """
+        处理请求发送的函数，带有重试机制
+        """
+        message_url = message_url.format(access_token=self.__get_access_token())
+        headers = {'content-type': 'application/json'}
+        res = RequestUtils(headers=headers).post(message_url,
+                                                     data=json.dumps(req_json, ensure_ascii=False).encode('utf-8'))
+        if res and res.status_code == 200:
+            ret_json = res.json()
+            if ret_json.get('errcode') == 0:
+                return True, ret_json.get('errmsg')
+            else:
+                if ret_json.get('errcode') == 42001:
+                    self.__get_access_token(force=True)
+                return False, ret_json.get('errmsg')
+        elif res is not None:
+            return False, f"错误码：{res.status_code}，错误原因：{res.reason}"
+        else:
+            raise Exception("未获取到返回信息")
+        
     def __post_request(self, message_url, req_json):
         """
         向微信发送请求
         """
-        headers = {'content-type': 'application/json'}
         try:
-            res = RequestUtils(headers=headers).post(message_url,
-                                                     data=json.dumps(req_json, ensure_ascii=False).encode('utf-8'))
-            if res and res.status_code == 200:
-                ret_json = res.json()
-                if ret_json.get('errcode') == 0:
-                    return True, ret_json.get('errmsg')
-                else:
-                    if ret_json.get('errcode') == 42001:
-                        self.__get_access_token(force=True)
-                    return False, ret_json.get('errmsg')
-            elif res is not None:
-                return False, f"错误码：{res.status_code}，错误原因：{res.reason}"
-            else:
-                return False, "未获取到返回信息"
+            return self._send_request_with_retry(message_url, req_json)
         except Exception as err:
             ExceptionUtils.exception_traceback(err)
             return False, str(err)

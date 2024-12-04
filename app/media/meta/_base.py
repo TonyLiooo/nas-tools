@@ -194,7 +194,7 @@ class MetaBase(object):
 
     def get_star_string(self):
         if self.vote_average:
-            return "评分：%s" % self.get_stars()
+            return "评分：%s (%.1f)" % (self.get_stars(), float(self.vote_average))
         else:
             return ""
 
@@ -213,7 +213,7 @@ class MetaBase(object):
         if not self.vote_average:
             return self.get_title_string()
         else:
-            return "%s\n%s" % (self.get_title_string(), self.get_star_string())
+            return "%s\n%s\n%s" % (self.get_title_string(), self.get_type_string(), self.get_star_string())
 
     def get_title_ep_string(self):
         string = self.get_title_string()
@@ -384,7 +384,16 @@ class MetaBase(object):
             ret_string = f"{ret_string} {self.resource_effect}"
         if self.resource_pix:
             ret_string = f"{ret_string} {self.resource_pix}"
-        return ret_string
+        return ret_string.strip()
+    
+    # 获取分辨率和资源效果
+    def get_effect_string(self):
+        ret_string = ""
+        if self.resource_pix:
+            ret_string = f"{ret_string} {self.resource_pix}"
+        if self.resource_effect:
+            ret_string = f"{ret_string} {self.resource_effect}"
+        return ret_string.strip()
 
     # 返回资源类型字符串，不含分辨率
     def get_edtion_string(self):
@@ -495,16 +504,41 @@ class MetaBase(object):
         if upload_volume_factor is None or download_volume_factor is None:
             return "未知"
         free_strs = {
-            "1.0 1.0": "普通",
-            "1.0 0.0": "免费",
+            "1.0 1.0": "Base",
+            "1.0 0.0": "Free",
             "2.0 1.0": "2X",
-            "2.0 0.0": "2X免费",
+            "2.0 0.0": "2XFree",
             "1.0 0.5": "50%",
             "2.0 0.5": "2X 50%",
             "1.0 0.7": "70%",
             "1.0 0.3": "30%"
         }
         return free_strs.get('%.1f %.1f' % (upload_volume_factor, download_volume_factor), "未知")
+
+    # 返回促销类型
+    def get_promotion_string(self):
+        return self.get_free_string(self.upload_volume_factor, self.download_volume_factor)
+    
+    # 返回促销优先级
+    def get_promotion_priority(self):
+        return self.get_free_priority(self.upload_volume_factor, self.download_volume_factor)
+    
+    @staticmethod
+    def get_free_priority(upload_volume_factor, download_volume_factor):
+        if upload_volume_factor is None or download_volume_factor is None:
+            return 9999
+        priority_map = {
+            "2.0 0.0": 0,
+            "1.0 0.0": 1,
+            "2.0 0.5": 2,
+            "1.0 0.5": 3,
+            "2.0 0.3": 4,
+            "1.0 0.3": 5,
+            "2.0 1.0": 6,
+            "1.0 1.0": 7,
+        }
+        key = '%.1f %.1f' % (upload_volume_factor, download_volume_factor)
+        return priority_map.get(key, 9999)
 
     # 是否包含季
     def is_in_season(self, season):

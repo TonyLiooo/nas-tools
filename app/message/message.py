@@ -7,7 +7,7 @@ import log
 from app.conf import ModuleConf
 from app.helper import DbHelper, SubmoduleHelper
 from app.message.message_center import MessageCenter
-from app.utils import StringUtils, ExceptionUtils
+from app.utils import StringUtils, ExceptionUtils, NumberUtils
 from app.utils.commons import singleton
 from app.utils.types import SearchType, MediaType
 from config import Config
@@ -125,7 +125,7 @@ class Message(object):
                     url = "%s?next=%s" % (self._domain, url)
             else:
                 url = ""
-        else:
+        elif not url.startswith("http"):
             url = ""
         # 消息内容分段
         max_length = client.get("max_length")
@@ -192,7 +192,7 @@ class Message(object):
             log.error(f"【Message】{cname} 发送消息失败：%s" % ret_msg)
         return state
 
-    def send_channel_list_msg(self, channel, title, medias: list, user_id=""):
+    def send_channel_list_msg(self, channel, title, medias: list, user_id="", page=0, page_size=8):
         """
         发送列表选择消息，用于消息交互
         :param channel: 消息渠道
@@ -205,15 +205,32 @@ class Message(object):
             texts = []
             index = 1
             for media in medias:
-                texts.append(f"{index}. {media.get_title_string()}，{media.get_vote_string()}")
+                if not media.site:
+                    content = f"{index}. {media.get_title_string()}\n"  \
+                            f"{media.get_type_string()}，"  \
+                            f"{media.get_vote_string()}"
+                else:
+                    content = f"{index}.【{media.site}】"  \
+                            f"{media.get_season_episode_string()} " \
+                            f"{media.get_effect_string()} "  \
+                            f"{media.get_video_encode_string()} "   \
+                            f"{media.get_audio_encode_string()} "   \
+                            f"{media.get_resource_team_string()} "  \
+                            f"{NumberUtils.get_size_gb(media.size):.2f}G " \
+                            f"{media.get_volume_factor_string()} "  \
+                            f"{media.seeders}↑ " \
+                            f"{media.peers}↓ " 
+                texts.append(f"{content.replace("  "," ").strip(",，").strip()}")
                 index += 1
             self.messagecenter.insert_system_message(title=title, content="\n".join(texts))
             return True
         client = self._active_interactive_clients.get(channel)
         if client:
+            start = page_size * page if page >= 0 else 0
+            end = min(len(medias), page_size * (page + 1))
             state = self.__send_list_msg(client=client,
                                          title=title,
-                                         medias=medias,
+                                         medias=medias[start:end],
                                          user_id=user_id)
             return state
         return False

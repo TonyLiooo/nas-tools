@@ -488,7 +488,7 @@ class DoubanSync(_IPluginModule):
                                 continue
                             if not self._auto_rss:
                                 # 开始搜索
-                                search_result, no_exists, search_count, download_count = self.searcher.search_one_media(
+                                search_result, no_exists, search_count, download_count, media_list = self.searcher.search_one_media(
                                     media_info=media_info,
                                     in_from=SearchType.DB,
                                     no_exists=no_exists,
