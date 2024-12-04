@@ -22,7 +22,7 @@ class OpenAiHelper:
         self._api_key = Config().get_config("openai").get("api_key")
         self._api_url = Config().get_config("openai").get("api_url")
         self._proxy = Config().get_proxies()
-        if self._api_url:
+        if self._api_url and "/v1" not in self._api_url:
             self._api_url += "/v1"
         proxies : dict = {}
         proxy = self._proxy.get("http", None)
