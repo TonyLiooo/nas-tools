@@ -33,6 +33,11 @@ class IyuuHelper(object):
                     accept_type="application/json",
                     headers={'token': self._token}
                 ).get_res(f"{self._api_base + url}", params=params)
+            elif method == "postForm":
+                ret = RequestUtils(
+                    accept_type="application/x-www-form-urlencoded",
+                    headers={'token': self._token}
+                ).post_res(f"{self._api_base + url}", data=params)
             else:
                 ret = RequestUtils(
                     accept_type="application/json",
@@ -142,7 +147,7 @@ class IyuuHelper(object):
         json_data = json.dumps(info_hashs, separators=(',', ':'), ensure_ascii=False)
         sha1 = self.get_sha1(json_data)
         result, msg = self.__request_iyuu(url='/reseed/index/index',
-                                          method="post",
+                                          method="postForm",
                                           params={
                                             'hash': json_data,
                                             'sha1': sha1,
@@ -186,12 +191,12 @@ class IyuuHelper(object):
         :return: 状态码、错误信息
         """
         result, msg = self.__request_iyuu(url='/reseed/users/bind',
-                                          method="post",
+                                          method="postForm",
                                           params={
                                               "token": self._token,
                                               "site": site,
-                                              'sid': sid,
+                                              'sid': int(sid),
                                               "passkey": self.get_sha1(passkey),
-                                              "id": uid
+                                              "id": int(uid)
                                           })
         return result, msg
