@@ -169,6 +169,8 @@ openai:
   api_key:
   # 【openai api url】：自定义openai请求地址
   api_url:
+  # 【openai api model】：自定义openai模型
+  api_model:
 
 # 【OCR】
 ocr:

@@ -1,5 +1,5 @@
 import json
-
+import re
 import httpx
 import openai
 from openai import OpenAI
@@ -8,11 +8,19 @@ from app.utils import OpenAISessionCache
 from app.utils.commons import singleton
 from config import Config
 
+api_model_map = {
+    "sk-": "gpt-4o-mini",                   # OpenAI
+    "googleapis.com": "gemini-1.5-flash",   # Gemini
+    "xai-": "grok-beta",                    # xAI
+    "xf-yun.com": "lite",                   # 讯飞
+    "cloudflare.com": "@cf/meta/llama-3.2-3b-instruct"  # Cloudflare
+}
 
 @singleton
 class OpenAiHelper:
     _api_key = None
     _api_url = None
+    _api_model = None
     _proxy = None
 
     def __init__(self):
@@ -21,8 +29,16 @@ class OpenAiHelper:
     def init_config(self):
         self._api_key = Config().get_config("openai").get("api_key")
         self._api_url = Config().get_config("openai").get("api_url")
+        self._api_model = Config().get_config("openai").get("api_model")
         self._proxy = Config().get_proxies()
-        if self._api_url and "/v1" not in self._api_url:
+        if not self._api_model:
+            for key, model in api_model_map.items():
+                if key in self._api_url or self._api_key.startswith(key):
+                    self._api_model = model
+                    break
+            else:
+                self._api_model = "gpt-4o-mini"
+        if self._api_url and not re.search(r"/v\d+", self._api_url):
             self._api_url += "/v1"
         proxies : dict = {}
         proxy = self._proxy.get("http", None)
@@ -116,12 +132,19 @@ class OpenAiHelper:
                         "content": message
                     }
                 ]
-        return self._client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            user=user,
-            messages=message,
-            **kwargs
-        )
+        if "gemini" in self._api_model:
+            return self._client.chat.completions.create(
+                model=self._api_model,
+                messages=message,
+                **kwargs
+            )
+        else:
+            return self._client.chat.completions.create(
+                model=self._api_model,
+                user=user,
+                messages=message,
+                **kwargs
+            )
 
     @staticmethod
     def __clear_session(session_id):
