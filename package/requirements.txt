@@ -119,7 +119,7 @@ wsproto==1.2.0
 zhconv==1.4.3
 jellyfish==1.1.0
 chardet==5.2.0
-nodriver==0.37
+nodriver==0.38.post1
 pycryptodomex==3.21.0
 pyyaml==6.0.2
 httpx[socks]==0.27.2
