@@ -204,7 +204,7 @@ class OpenAiHelper:
             return f"请求被ChatGPT拒绝了，{str(e)}"
         except openai.APIConnectionError as e:
             return "ChatGPT网络连接失败！"
-        except openai.Timeout as e:
+        except openai.APITimeoutError as e:
             return "没有接收到ChatGPT的返回消息！"
         except Exception as e:
             return f"请求ChatGPT出现错误：{str(e)}"
