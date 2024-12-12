@@ -12,8 +12,8 @@ RUN apk add --no-cache --virtual .build-deps \
     && ARCH=$(if [ "$(uname -m)" = "x86_64" ]; then echo "amd64"; else echo "arm64"; fi) \
     && curl -sSfL https://dl.min.io/client/mc/release/linux-${ARCH}/mc --create-dirs -o /usr/bin/mc \
     && chmod +x /usr/bin/mc \
-    && pip install --no-cache-dir --upgrade pip setuptools wheel cython \
-    && pip install --no-cache-dir -r https://raw.githubusercontent.com/TonyLiooo/nas-tools/master/requirements.txt \
+    && pip install --upgrade pip setuptools wheel cython \
+    && pip install -r https://raw.githubusercontent.com/TonyLiooo/nas-tools/master/requirements.txt \
     && apk del --purge .build-deps \
     && rm -rf /var/cache/apk/* /tmp/* /root/.cache/*
 
