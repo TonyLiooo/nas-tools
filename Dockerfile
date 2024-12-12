@@ -1,4 +1,4 @@
-FROM python:3.12.7-alpine3.20
+FROM python:3.12-alpine
 COPY requirements.txt ./
 COPY package_list.txt ./
 RUN apk update
@@ -13,9 +13,9 @@ RUN apk add --no-cache --virtual .build-deps \
     && if [ "$(uname -m)" = "x86_64" ]; then ARCH=amd64; elif [ "$(uname -m)" = "aarch64" ]; then ARCH=arm64; fi \
     && curl https://dl.min.io/client/mc/release/linux-${ARCH}/mc --create-dirs -o /usr/bin/mc \
     && chmod +x /usr/bin/mc \
-    && pip install --upgrade pip setuptools wheel \
-    && pip install cython \
-    && pip install -r ./requirements.txt \
+    && pip --no-cache-dir install --upgrade pip setuptools wheel \
+    && pip --no-cache-dir install cython \
+    && pip --no-cache-dir install -r ./requirements.txt \
     && apk del --purge .build-deps \
     && rm -rf /tmp/* /root/.cache /var/cache/apk/*
 ENV PYTHONPATH=/usr/lib/python3.12/site-packages \

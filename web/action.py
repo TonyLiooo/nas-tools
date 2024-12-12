@@ -27,7 +27,7 @@ from app.filetransfer import FileTransfer
 from app.filter import Filter
 from app.helper import DbHelper, ProgressHelper, ThreadHelper, \
     MetaHelper, DisplayHelper, WordsHelper
-from app.helper import RssHelper, PluginHelper
+from app.helper import RssHelper, PluginHelper, ChromeHelper
 from app.indexer import Indexer
 from app.media import Category, Media, Bangumi, DouBan, Scraper
 from app.media.meta import MetaInfo, MetaBase
@@ -319,6 +319,8 @@ class WebAction:
         Downloader().stop_service()
         # 关闭插件
         PluginManager().stop_service()
+        # 关闭浏览器
+        ChromeHelper.kill_chrome_processes()
 
     @staticmethod
     def start_service():
