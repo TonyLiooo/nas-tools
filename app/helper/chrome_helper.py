@@ -3,7 +3,7 @@ import asyncio
 import psutil
 import re
 import nodriver as nd
-from nodriver import Tab, Element
+from nodriver import Tab, Element, Browser
 from nodriver.core.config import find_chrome_executable
 from urllib.parse import urlparse
 
@@ -413,7 +413,7 @@ class ChromeHelper(object):
         if self._headless:
             options.headless = True
         options.lang="zh-CN"
-        chrome = await nd.Browser.create(config=options)
+        chrome = await RetryBrowser.create(config=options)
         return chrome
 
     async def visit(self, url, ua=None, cookie=None, local_storage=None, timeout=30, proxy=None, new_tab=False):
@@ -567,16 +567,28 @@ class ChromeHelper(object):
 
     async def quit(self):
         if self._chrome:
-            for tab in self._chrome.tabs:
-                await tab.close()
-            self._chrome.stop()
-            # Wait for the websocket to return True (Closed)
-            while not self._chrome.connection.closed:
-                # log.debug(f"Websocket status: {self._chrome.connection.closed}")
-                await asyncio.sleep(0.1)
-            self._fixup_uc_pid_leak()
-            self._tab = None
-            self._chrome = None
+            try:
+                # Close all tabs
+                for tab in self._chrome.tabs:
+                    await tab.close()
+                # Attempt to close the websocket connection manually
+                if self._chrome.connection:
+                    await self._chrome.connection.aclose()
+                self._chrome.stop()
+                # Wait for the websocket to return True (Closed)
+                while not self._chrome.connection.closed:
+                    # log.debug(f"Websocket status: {self._chrome.connection.closed}")
+                    await asyncio.sleep(0.1)
+            except Exception as e:
+                log.error(f"Error during browser closure: {e}")
+            finally:
+                # Ensure the browser process is terminated
+                if self._chrome._process:
+                    self._chrome._process.terminate()
+                    await self._chrome._process.wait()
+                self._fixup_uc_pid_leak()
+                self._tab = None
+                self._chrome = None
 
     def _fixup_uc_pid_leak(self):
         process_pid = self._chrome._process_pid
@@ -615,6 +627,112 @@ class ChromeHelper(object):
 
     def __del__(self):
         pass
+    
+    @staticmethod
+    def kill_chrome_processes():
+        # Iterate through all running processes
+        for proc in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
+            try:
+                if 'chrome' in proc.info['name'].lower() or 'chromium' in proc.info['name'].lower():
+                    proc.terminate()
+                    proc.wait(timeout=3)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+
+        # Check if any processes are still running and forcefully kill them if needed
+        for proc in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
+            try:
+                if 'chrome' in proc.info['name'].lower() or 'chromium' in proc.info['name'].lower():
+                    print(f"Force killing process: {proc.info['pid']} - {proc.info['name']}")
+                    proc.kill()
+                    proc.wait(timeout=3)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+
+class RetryBrowser(Browser):
+    @classmethod
+    async def create(
+        cls,
+        config=None,
+        *,
+        user_data_dir=None,
+        headless=False,
+        browser_executable_path=None,
+        browser_args=None,
+        sandbox=True,
+        host=None,
+        port=None,
+        max_retries=3,
+        retry_interval=2,
+        **kwargs,
+    ) -> "RetryBrowser":
+        """
+        Wrapper for the original `create` method with retry functionality.
+        """
+        retries = 0
+
+        while retries < max_retries:
+            instance = cls(
+                config=config or cls.Config(
+                    user_data_dir=user_data_dir,
+                    headless=headless,
+                    browser_executable_path=browser_executable_path,
+                    browser_args=browser_args or [],
+                    sandbox=sandbox,
+                    host=host,
+                    port=port,
+                    **kwargs,
+                )
+            )
+            try:
+                await instance.start()
+                return instance
+            except Exception as e:
+                await asyncio.sleep(retry_interval)
+                try:
+                    instance.info = nd.ContraDict(await instance._http.get("version"), silent=True)
+                    if not instance.info:
+                        raise
+                    instance.connection = nd.Connection(instance.info.webSocketDebuggerUrl, _owner=instance)
+                    if instance.config.autodiscover_targets:
+                        instance.connection.handlers[nd.cdp.target.TargetInfoChanged] = [
+                            instance._handle_target_update
+                        ]
+                        instance.connection.handlers[nd.cdp.target.TargetCreated] = [
+                            instance._handle_target_update
+                        ]
+                        instance.connection.handlers[nd.cdp.target.TargetDestroyed] = [
+                            instance._handle_target_update
+                        ]
+                        instance.connection.handlers[nd.cdp.target.TargetCrashed] = [
+                            instance._handle_target_update
+                        ]
+                        await instance.connection.send(nd.cdp.target.set_discover_targets(discover=True))
+                    return instance
+                except:
+                    retries += 1
+                    log.debug(f"Failed to start browser, attempt {retries}/{max_retries}: {e}")
+                    if hasattr(instance, '_process') and instance._process:
+                        await RetryBrowser._cleanup_process(instance)
+                    instance._process = None
+                    instance._process_pid = None
+                    nd.util.get_registered_instances().remove(instance)
+        raise Exception(f"Failed to create browser after {max_retries} attempts")
+    
+    @staticmethod
+    async def _cleanup_process(instance: "RetryBrowser"):
+        """
+        Cleans up the browser process, tries to terminate gracefully, and force kills if necessary.
+        """
+        try:
+            instance._process.terminate()
+            await asyncio.wait_for(instance._process.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            log.debug("Process did not terminate within the timeout, forcefully killing.")
+            instance._process.kill()
+            await instance._process.wait()
+        except Exception as inner_exception:
+            log.debug(f"Error during process cleanup: {inner_exception}")
 
 def init_chrome():
     """
