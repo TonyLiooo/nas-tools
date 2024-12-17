@@ -1,4 +1,4 @@
-FROM python:3.12-alpine AS builder
+FROM python:3.12.8-alpine3.20 AS builder
 
 ARG branch
 

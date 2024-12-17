@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM python:3.12.8-alpine3.20
 
 # Install build dependencies and required packages in one layer
 RUN apk add --no-cache --virtual .build-deps \

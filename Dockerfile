@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM python:3.12.8-alpine3.20
 COPY requirements.txt ./
 COPY package_list.txt ./
 RUN apk update
