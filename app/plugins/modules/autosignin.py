@@ -725,6 +725,11 @@ class AutoSignIn(_IPluginModule):
                                 await chrome.quit()
                                 self.info("%s 仿真签到失败，无法通过Cloudflare" % site)
                                 return f"【{site}】仿真签到失败，无法通过Cloudflare！"
+                        logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+                        if not logged_in:
+                            await chrome.quit()
+                            self.warn("%s 仿真签到失败：未能检测到登录信息" % (site))
+                            return f"【{site}】签到失败！"
                         # 判断是否已签到   [签到已得125, 补签卡: 0]
                         if re.search(r'已签|签到已得', await chrome.get_html(), re.IGNORECASE):
                             await chrome.quit()
