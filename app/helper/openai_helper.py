@@ -31,13 +31,14 @@ class OpenAiHelper:
         self._api_url = Config().get_config("openai").get("api_url")
         self._api_model = Config().get_config("openai").get("api_model")
         self._proxy = Config().get_proxies()
+        if not self._api_key:
+            return
         if not self._api_model:
-            for key, model in api_model_map.items():
-                if key in self._api_url or self._api_key.startswith(key):
-                    self._api_model = model
-                    break
-            else:
-                self._api_model = "gpt-4o-mini"
+            self._api_model = next(
+                (model for key, model in api_model_map.items()
+                    if (self._api_url and key in self._api_url) or (self._api_key and self._api_key.startswith(key))),
+                "gpt-4o-mini"
+            )
         if self._api_url and not re.search(r"/v\d+", self._api_url):
             self._api_url += "/v1"
         proxies : dict = {}
