@@ -172,6 +172,14 @@
               {% endif %}
               </div>
             </div>
+            <div class="datagrid-item">
+              <div class="datagrid-title">种子进度</div>
+              <div class="datagrid-content">
+              {% if Attr.config.progress %}
+                {{ Attr.config.progress }} % -
+              {% endif %}
+              </div>
+            </div>
             {% if Attr.downloader_type == "qbittorrent" %}
               <div class="datagrid-item">
                 <div class="datagrid-title">分类</div>
@@ -376,7 +384,7 @@
           </div>
         </div>
         <div id="div_qb_config" class="row">
-          <div class="col-lg-7">
+          <div class="col-lg-4">
             <div class="mb-3">
               <label class="form-label">种子状态 <span class="form-help"
                 title=
@@ -389,7 +397,14 @@
               <input type="text" id="torrent_remove_qb_state" class="form-control" placeholder="多个状态用;分隔">
             </div>
           </div>
-          <div class="col-lg-5">
+          <div class="col-lg-4">
+            <div class="mb-3">
+              <label class="form-label">种子进度 <span class="form-help" title="种子当前进度小于等于设置值视为满足该条件，留空为不启用"
+                data-bs-toggle="tooltip">?</span></label>
+              <input type="text" id="torrent_remove_progress" class="form-control" placeholder="整数，例如0">
+            </div>
+          </div>
+          <div class="col-lg-4">
             <div class="mb-3">
               <label class="form-label">分类 <span class="form-help" title="设置多个分类时，种子属于其中任一分类视为满足该条件，留空为不启用"
                 data-bs-toggle="tooltip">?</span></label>
@@ -482,6 +497,7 @@
     $("#torrent_remove_savepath_key").val('');
     $("#torrent_remove_tracker_key").val('');
     $("#torrent_remove_qb_category").val('');
+    $("#torrent_remove_progress").val('');
     $("#torrent_remove_qb_state").val('');
     $("#torrent_remove_tr_error_key").val('');
     $("#torrent_remove_tr_state").val('');
@@ -537,6 +553,11 @@
         } else {
           $("#torrent_remove_upload_avs").val('');
         }
+        if (ret.detail.config.progress) {
+          $("#torrent_remove_progress").val(ret.detail.config.progress);
+        } else {
+          $("#torrent_remove_progress").val('');
+        }
         $("#torrent_remove_tags").val(ret.detail.config.tags.join(';'));
         $("#torrent_remove_savepath_key").val(ret.detail.config.savepath_key);
         $("#torrent_remove_tracker_key").val(ret.detail.config.tracker_key);
@@ -578,6 +599,12 @@
       return;
     } else {
       $("#torrent_remove_upload_avs").removeClass("is-invalid");
+    }
+    if (config.progress && isNaN(config.progress)) {
+      $("#torrent_remove_progress").addClass("is-invalid");
+      return;
+    } else {
+      $("#torrent_remove_progress").removeClass("is-invalid");
     }
     if (!config.downloader) {
       $("#download_setting_downloader").addClass("is-invalid");
