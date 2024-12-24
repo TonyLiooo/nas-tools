@@ -175,8 +175,8 @@
             <div class="datagrid-item">
               <div class="datagrid-title">种子进度</div>
               <div class="datagrid-content">
-              {% if Attr.config.progress %}
-                {{ Attr.config.progress }} % -
+              {% if Attr.config.progress is not none %}
+                ≤ {{ Attr.config.progress }} %
               {% endif %}
               </div>
             </div>
@@ -553,7 +553,7 @@
         } else {
           $("#torrent_remove_upload_avs").val('');
         }
-        if (ret.detail.config.progress) {
+        if (ret?.detail?.config?.progress != null) {
           $("#torrent_remove_progress").val(ret.detail.config.progress);
         } else {
           $("#torrent_remove_progress").val('');

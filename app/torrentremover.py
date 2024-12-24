@@ -217,11 +217,11 @@ class TorrentRemover(object):
             return False, "平均上传速度参数不合法"
         else:
             upload_avs = int(upload_avs)
-        progress = data.get("progress") or 0
-        if not str(progress).isdigit() or int(progress) < 0 or int(progress) > 100:
-            return False, "种子进度参数不合法"
+        progress = data.get("progress", "")
+        if (str(progress).isdigit() and (0 <= int(progress) <= 100)) or progress is "":
+            progress = int(progress) if str(progress).isdigit() else None
         else:
-            progress = int(progress)
+            return False, "种子进度参数不合法"
         size = data.get("size")
         size = str(size).split("-") if size else []
         if size and (len(size) != 2 or not str(size[0]).isdigit() or not str(size[-1]).isdigit()):

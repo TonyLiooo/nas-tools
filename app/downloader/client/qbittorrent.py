@@ -328,6 +328,7 @@ class Qbittorrent(_IDownloadClient):
         tracker_key = config.get("tracker_key")
         qb_state = config.get("qb_state")
         qb_category = config.get("qb_category")
+        progress = config.get("progress")
         for torrent in torrents:
             date_done = torrent.completion_on if torrent.completion_on > 0 else torrent.added_on
             date_now = int(time.mktime(datetime.now().timetuple()))
@@ -340,6 +341,8 @@ class Qbittorrent(_IDownloadClient):
             if size and (torrent.size >= maxsize or torrent.size <= minsize):
                 continue
             if upload_avs and torrent_upload_avs >= upload_avs * 1024:
+                continue
+            if progress and round(torrent.get('progress') * 100, 1) > progress:
                 continue
             if savepath_key and not re.findall(savepath_key, torrent.save_path, re.I):
                 continue

@@ -317,6 +317,7 @@ class Transmission(_IDownloadClient):
         savepath_key = config.get("savepath_key")
         tracker_key = config.get("tracker_key")
         tr_error_key = config.get("tr_error_key")
+        progress = config.get("progress")
         for torrent in torrents:
             date_done = torrent.date_done or torrent.date_added
             date_now = int(time.mktime(datetime.now().timetuple()))
@@ -330,6 +331,8 @@ class Transmission(_IDownloadClient):
             if size and (torrent.total_size >= maxsize or torrent.total_size <= minsize):
                 continue
             if upload_avs and torrent_upload_avs >= upload_avs * 1024:
+                continue
+            if progress and round(torrent.get('progress') * 100, 1) > progress:
                 continue
             if savepath_key and not re.findall(savepath_key, torrent.download_dir, re.I):
                 continue
