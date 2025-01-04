@@ -89,6 +89,11 @@ class GazelleSiteUserInfo(_ISiteUserInfo):
             if user_levels_text:
                 self.user_level = user_levels_text[0].split(':')[1].strip()
 
+        # 最近动向
+        last_seen_text = html.xpath('//li[contains(., "最近访问")]/span')
+        if last_seen_text:
+            self.last_seen = StringUtils.unify_datetime_str(last_seen_text[0].text.strip())
+
         # 加入日期
         join_at_text = html.xpath('//*[@id="join-date-value"]/@data-value')
         if join_at_text:
