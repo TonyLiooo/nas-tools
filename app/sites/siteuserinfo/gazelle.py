@@ -91,8 +91,11 @@ class GazelleSiteUserInfo(_ISiteUserInfo):
 
         # 最近动向
         last_seen_text = html.xpath('//li[contains(., "最近访问")]/span')
-        if last_seen_text:
-            self.last_seen = StringUtils.unify_datetime_str(last_seen_text[0].text.strip())
+        last_seen_element = html.xpath('//li[starts-with(normalize-space(text()), "最近访问")]/span')
+        if last_seen_element:
+            last_seen_text = last_seen_element[0].text
+            if last_seen_text:
+                self.last_seen = StringUtils.unify_datetime_str(last_seen_text.strip())
 
         # 加入日期
         join_at_text = html.xpath('//*[@id="join-date-value"]/@data-value')
