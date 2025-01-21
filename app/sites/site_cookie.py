@@ -50,7 +50,8 @@ class SiteCookie(object):
                              password,
                              twostepcode=None,
                              ocrflag=False,
-                             proxy=False):
+                             proxy=False,
+                             ua=None):
         """
         获取站点cookie、local storage和ua
         :param url: 站点地址
@@ -59,6 +60,7 @@ class SiteCookie(object):
         :param twostepcode: 两步验证
         :param ocrflag: 是否开启OCR识别
         :param proxy: 是否使用内置代理
+        :param ua: 自定义User-Agent
         :return: cookie、local storage、 ua、message
         """
         if not url or not username or not password:
@@ -67,7 +69,7 @@ class SiteCookie(object):
         chrome = ChromeHelper()
         if not chrome.get_status():
             return None, None, None, "需要浏览器内核环境才能更新站点信息"
-        if not await chrome.visit(url=url, proxy=proxy):
+        if not await chrome.visit(url=url, proxy=proxy, ua=ua):
             await chrome.quit()
             return None, None, None, "Chrome模拟访问失败"
         # 循环检测是否过cf
@@ -87,7 +89,7 @@ class SiteCookie(object):
             await chrome.quit()
             return None, None, None, "获取源码失败"
         if SiteHelper.is_logged_in(html_text):
-            cookies, ua = await chrome.get_cookies(), chrome.get_ua()
+            cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
             local_storage = await chrome.get_local_storage()
             await chrome.quit()
             return cookies, local_storage, ua, "已经登录过且Cookie未失效"
@@ -227,7 +229,7 @@ class SiteCookie(object):
             await chrome.quit()
             return None, None, None, "获取源码失败"
         if SiteHelper.is_logged_in(html_text):
-            cookies, ua = await chrome.get_cookies(), chrome.get_ua()
+            cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
             local_storage = await chrome.get_local_storage()
             await chrome.quit()
             return cookies, local_storage, ua, ""
@@ -305,7 +307,7 @@ class SiteCookie(object):
                     # check again
                     html_text = await chrome.get_html()
                     if SiteHelper.is_logged_in(html_text):
-                        cookies, ua = await chrome.get_cookies(), chrome.get_ua()
+                        cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
                         local_storage = await chrome.get_local_storage()
                         await chrome.quit()
                         return cookies, local_storage, ua, ""
@@ -379,13 +381,15 @@ class SiteCookie(object):
                 login_url = "%s/%s" % (baisc_url, site_conf.get("LOGIN"))
             else:
                 login_url = "%s/login.php" % baisc_url
+            ua = site.get("ua", None)
             # 获取Cookie和User-Agent
             cookie, local_storage, ua, msg = await self.__get_site_cookie_ua(url=login_url,
                                                         username=username,
                                                         password=password,
                                                         twostepcode=twostepcode,
                                                         ocrflag=ocrflag,
-                                                        proxy=site.get("proxy"))
+                                                        proxy=site.get("proxy"),
+                                                        ua=ua)
             # 更新进度
             curr_num += 1
             if not cookie and not local_storage:

@@ -123,7 +123,7 @@ class RenderSpider(object):
             return True, []
         # 重新获取Cookie和UA
         self._indexer.cookie = await chrome.get_cookies()
-        self._indexer.ua = chrome.get_ua()
+        self._indexer.ua = await chrome.get_ua()
         # 设置抓虫参数
         self.torrentspider.setparam(keyword=keyword,
                                     indexer=self._indexer,

@@ -49,6 +49,7 @@ class ChromeHelper(object):
     _headless = False
 
     _proxy = None
+    _ua = None
 
     def __init__(self, headless=False):
 
@@ -403,6 +404,9 @@ class ChromeHelper(object):
         options.add_argument("--disable-popup-blocking")
         options.add_argument('--disable-web-security')
 
+        if self._ua:
+            options.add_argument(f'--user-agent={self._ua}')
+
         if SystemUtils.is_windows() or SystemUtils.is_macos():
             options.add_argument("--window-position=-32000,-32000")
         if self._proxy:
@@ -418,11 +422,10 @@ class ChromeHelper(object):
 
     async def visit(self, url, ua=None, cookie=None, local_storage=None, timeout=30, proxy=None, new_tab=False):
         self._proxy = proxy
+        self._ua = ua
         if not await self.browser:
             return False
         try:
-            if ua:
-                await self._chrome.connection.send(nd.cdp.network.set_user_agent_override(user_agent = ua))
             if cookie:
                 await self._chrome.cookies.clear()
                 cookies = self.string_to_cookie_params(cookie, url)
@@ -558,9 +561,13 @@ class ChromeHelper(object):
                 log.error(str(err))
         return ""
 
-    def get_ua(self):
+    async def get_ua(self):
         try:
-            return re.sub('HEADLESS', '', self._chrome.info['User-Agent'], flags=re.IGNORECASE)
+            if self._tab:
+                return await self._tab.evaluate('navigator.userAgent')
+            elif self._chrome:
+                return re.sub('HEADLESS', '', self._chrome.info['User-Agent'], flags=re.IGNORECASE)
+            return None
         except Exception as err:
             log.error(str(err))
             return None
