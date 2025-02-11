@@ -319,7 +319,7 @@ class Transmission(_IDownloadClient):
         tr_error_key = config.get("tr_error_key")
         progress = config.get("progress")
         for torrent in torrents:
-            date_done = torrent.date_done or torrent.date_added
+            date_done = torrent.done_date or torrent.added_date
             date_now = int(time.mktime(datetime.now().timetuple()))
             torrent_seeding_time = date_now - int(time.mktime(date_done.timetuple())) if date_done else 0
             torrent_uploaded = torrent.ratio * torrent.total_size
@@ -445,7 +445,7 @@ class Transmission(_IDownloadClient):
             log.error(f"【{self.client_name}】{self.name} 获取种子文件列表出错：{str(err)}")
             return None
         if torrent:
-            return torrent.files()
+            return torrent.get_files()
         else:
             return None
 
