@@ -1,6 +1,6 @@
 import random
 import time
-from functools import lru_cache
+from async_lru import alru_cache
 
 from lxml import etree
 import log
@@ -246,7 +246,7 @@ class SiteConf:
         return free_deadline_str
 
     @staticmethod
-    @lru_cache(maxsize=128)
+    @alru_cache(maxsize=128)
     async def __get_site_page_html(url, cookie, local_storage=None, ua=None, render=False, proxy=False):
         chrome = ChromeHelper()
         if (render or local_storage) and chrome.get_status():
