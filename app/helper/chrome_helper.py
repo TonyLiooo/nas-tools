@@ -402,7 +402,6 @@ class ChromeHelper(object):
         options.add_argument('--ignore-ssl-errors')
         options.add_argument('--use-gl=swiftshader')
         options.add_argument("--disable-popup-blocking")
-        options.add_argument('--disable-web-security')
 
         if self._ua:
             options.add_argument(f'--user-agent={self._ua}')
@@ -434,11 +433,13 @@ class ChromeHelper(object):
                 await self._tab.get(url)
             else:
                 self._tab = await self._chrome.get(url)
+            await self._tab
+            await self._tab.wait_for(text="html",timeout=timeout)
             if local_storage:
-                await self._tab
-                await self._tab.wait_for(text="html",timeout=timeout)
                 await self.set_local_storage(local_storage)
                 await self._tab.get(url)
+                await self._tab
+                await self._tab.wait_for(text="html",timeout=timeout)
             await asyncio.wait_for(self.check_document_ready(self._tab), timeout)
             return True
         except asyncio.TimeoutError:

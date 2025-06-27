@@ -25,14 +25,15 @@ ACCESS_DENIED_SELECTORS = [
 CHALLENGE_TITLES = [
     # Cloudflare
     'Just a moment...',
+    '请稍候…',
     # DDoS-GUARD
     'DDoS-Guard'
 ]
 
 CHALLENGE_SELECTORS = [
     # Cloudflare
-    '#cf-challenge-running', '.ray_id', '.attack-box',
-    '#cf-please-wait', '#challenge-spinner', '#trk_jschal_js', '#turnstile-wrapper', '.lds-ring',
+    '#cf-challenge-running', '.ray_id', '.attack-box', '#cf-please-wait', '#challenge-spinner', 
+    '#trk_jschal_js', '#turnstile-wrapper', '.lds-ring', 'div.g-recaptcha', 'div.h-captcha',
     # Custom CloudFlare for EbookParadijs, Film-Paleis, MuziekFabriek and Puur-Hollands
     'td.info #js_info',
     # Fairlane / pararius.com

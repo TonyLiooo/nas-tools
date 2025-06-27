@@ -426,7 +426,7 @@ class SiteCookie(object):
         cookies = await chrome.get_cookies()
         if not cookies:
             cookies = None
-        ret = RequestUtils(headers=chrome.get_ua(),
+        ret = RequestUtils(headers=await chrome.get_ua(),
                            cookies=cookies).get_res(image_url)
         if ret:
             return base64.b64encode(ret.content).decode()
