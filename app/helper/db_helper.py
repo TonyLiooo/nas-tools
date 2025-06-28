@@ -469,6 +469,8 @@ class DbHelper:
         """
         if not name:
             return
+        if not isinstance(local_storage, str):
+            local_storage = json.dumps(local_storage)
         self._db.insert(CONFIGSITE(
             NAME=name,
             PRI=site_pri,
@@ -497,6 +499,8 @@ class DbHelper:
         """
         if not tid:
             return
+        if not isinstance(local_storage, str):
+            local_storage = json.dumps(local_storage)
         self._db.query(CONFIGSITE).filter(CONFIGSITE.ID == int(tid)).update(
             {
                 "NAME": name,
@@ -552,7 +556,8 @@ class DbHelper:
         """
         if not tid:
             return
-
+        if not isinstance(local_storage, str):
+            local_storage = json.dumps(local_storage)
         self._db.query(CONFIGSITE).filter(CONFIGSITE.ID == int(tid)).update(
             {
                 "LOCALSTORAGE": local_storage
