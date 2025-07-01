@@ -718,7 +718,7 @@ class AutoSignIn(_IPluginModule):
                         await checkin_obj.mouse_move()
                         await checkin_obj.mouse_click()
                         # 检测是否过cf
-                        await chrome._tab.sleep(3)
+                        await asyncio.sleep(3)
                         if under_challenge(await chrome.get_html()):
                             cloudflare = await chrome.pass_cloudflare()
                             if not cloudflare:

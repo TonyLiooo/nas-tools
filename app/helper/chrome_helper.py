@@ -101,7 +101,7 @@ class ChromeHelper(object):
         async def wait_element_disappear():
             try:
                 while await tab.find(text=text, timeout=3):
-                    await tab.sleep(1)
+                    await asyncio.sleep(1)
             except asyncio.TimeoutError:
                 return True
         try:
@@ -156,7 +156,7 @@ class ChromeHelper(object):
     @staticmethod
     async def check_document_ready(tab:Tab):
         while await tab.evaluate('document.readyState') == 'loading':
-            await tab.sleep(1)
+            await asyncio.sleep(1)
         return True
     
     @staticmethod
@@ -538,7 +538,7 @@ class ChromeHelper(object):
             if current_storage == previous_storage:
                 break
             previous_storage = current_storage
-            await self._tab.sleep(1)
+            await asyncio.sleep(1)
 
         for i in range(3):
             try:
@@ -549,7 +549,7 @@ class ChromeHelper(object):
             except Exception as err:
                 if i == 2:
                     log.error("set local storage error: " + str(err))
-            await self._tab.sleep(1)
+            await asyncio.sleep(1)
 
     async def get_local_storage(self):
         if self._tab:

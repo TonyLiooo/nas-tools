@@ -81,16 +81,16 @@ def under_challenge(html_text: str):
 @staticmethod
 async def check_document_ready(tab:Tab):
     while await tab.evaluate('document.readyState') == 'loading':
-        await tab.sleep(1)
+        await asyncio.sleep(1)
     return True
 
 async def _until_match_func(tab: Tab, item, match_func, async_type=True):
     if async_type:
         while not await match_func(tab, item):
-            await tab.sleep(0.1)
+            await asyncio.sleep(0.1)
     else:
         while not match_func(tab, item):
-            await tab.sleep(0.1)
+            await asyncio.sleep(0.1)
     return True
             
 async def _wait_until_condition(tab: Tab, items, match_func, async_type=True, timeout=SHORT_TIMEOUT, message=''):

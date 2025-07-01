@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import re
+import asyncio
 from abc import ABC
 from urllib.parse import urljoin, urlsplit
 
@@ -249,7 +250,7 @@ class MteamSiteUserInfo(_ISiteUserInfo):
             # Extract the aria-disabled attribute
             if pagination_next and pagination_next.get('aria-disabled', 'false')=='false' and next_obj:
                 await next_obj.click()
-                await self.chrome._tab.sleep(0.5)
+                await asyncio.sleep(0.5)
                 await self._parse_message_unread_links(await self.chrome.get_html(), msg_links)
 
     async def _pase_unread_msgs(self):

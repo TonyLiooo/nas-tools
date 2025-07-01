@@ -83,7 +83,7 @@ class SiteCookie(object):
             await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
         except:
             pass
-        await chrome._tab.sleep(2)
+        await asyncio.sleep(2)
         html_text = await chrome.get_html()
         if not html_text:
             await chrome.quit()
@@ -236,7 +236,7 @@ class SiteCookie(object):
         else:
             if url.find("m-team") != -1:
                 if "郵箱驗證碼" in html_text:
-                    await chrome._tab.sleep(5)
+                    await asyncio.sleep(5)
                     # email handler
                     email_xpath = '//input[@id="email"]'
                     email_send_xpath = '//div[@id="code"]/button'
@@ -260,19 +260,19 @@ class SiteCookie(object):
                             # 推送到前端
                             self.progress.update(ptype=ProgressKey.SiteCookie,
                                                  text=f"{code_bin}|{code_key}")
-                            await chrome._tab.sleep(1)
+                            await asyncio.sleep(1)
                     if not email:
                         await chrome.quit()
                         return None, None, None, "email 输入超时"
                     email_element = await chrome._tab.find(email_xpath)
                     await email_element.send_keys(email)
-                    await chrome._tab.sleep(1)
+                    await asyncio.sleep(1)
                     # click send email
                     email_send_obj = await chrome.element_to_be_clickable(email_send_xpath, timeout=10)
                     if email_send_obj:
                         await email_send_obj.mouse_move()
                         await email_send_obj.mouse_click()
-                    await chrome._tab.sleep(1)
+                    await asyncio.sleep(1)
                     # get user input code
                     email_verify_code = None
                     code_key = StringUtils.generate_random_str(5)
@@ -289,7 +289,7 @@ class SiteCookie(object):
                             # 推送到前端
                             self.progress.update(ptype=ProgressKey.SiteCookie,
                                                  text=f"{code_bin}|{code_key}")
-                            await chrome._tab.sleep(1)
+                            await asyncio.sleep(1)
                     if not email_verify_code:
                         await chrome.quit()
                         return None, None, None, "email 验证码输入超时"

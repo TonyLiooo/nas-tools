@@ -3,7 +3,7 @@ from app.helper.cloudflare_helper import under_challenge
 from app.plugins.modules._autosignin._base import _ISiteSigninHandler
 from app.utils import StringUtils, RequestUtils
 from config import Config
-
+import asyncio
 
 class HDFans(_ISiteSigninHandler):
     """
@@ -108,7 +108,7 @@ class HDFans(_ISiteSigninHandler):
             self.warn("%s 无法打开网站" % site)
             return f"【{site}】仿真签到失败，无法打开网站！", None
         # 检测是否过cf
-        await chrome._tab.sleep(3)
+        await asyncio.sleep(3)
         if under_challenge(await chrome.get_html()):
             # 循环检测是否过cf
             cloudflare = await chrome.pass_cloudflare()

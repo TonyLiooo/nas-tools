@@ -13,6 +13,7 @@ from app.helper import ChromeHelper
 from app.plugins.modules._autosignin._base import _ISiteSigninHandler
 from app.utils import StringUtils, RequestUtils
 from config import Config
+import asyncio
 
 
 class Tjupt(_ISiteSigninHandler):
@@ -193,7 +194,7 @@ class Tjupt(_ISiteSigninHandler):
         chrome = ChromeHelper()
         await chrome.visit(url=image_search_url, proxy=Config().get_proxies())
         # 等待页面加载
-        await chrome._tab.sleep(3)
+        await asyncio.sleep(3)
         # 获取识图结果
         html_text = await chrome.get_html()
         search_results = BeautifulSoup(html_text, "lxml").find_all("div", class_="UAiK1e")

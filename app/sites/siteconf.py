@@ -254,7 +254,7 @@ class SiteConf:
             if await chrome.visit(url=url, cookie=cookie, local_storage=local_storage, ua=ua, proxy=proxy):
                 if await SiteHelper.wait_for_logged_in(chrome._tab):
                     # 等待页面加载完成
-                    # await chrome._tab.sleep(10)
+                    # await asyncio.sleep(10)
                     html = await chrome.get_html()
                     await chrome.quit()
                     return html

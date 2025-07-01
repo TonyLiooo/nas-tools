@@ -192,7 +192,7 @@ class MTeamSpider(object):
             # Extract the aria-disabled attribute
             if pagination_next and pagination_next.get('aria-disabled', 'false')=='false' and next_obj:
                 await next_obj.click()
-                await chrome._tab.sleep(0.5)
+                await asyncio.sleep(0.5)
             else:
                 break
         await chrome.quit()
