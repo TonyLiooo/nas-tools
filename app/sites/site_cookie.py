@@ -43,6 +43,12 @@ class SiteCookie(object):
         获取验证码的值
         """
         return self.captcha_code.get(code)
+    
+    def xpath_search(self, html_element, xpath_list):
+        for xpath in xpath_list:
+            if html_element.xpath(xpath):
+                return xpath
+        return None
 
     async def __get_site_cookie_ua(self,
                              url,
@@ -83,7 +89,7 @@ class SiteCookie(object):
             await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
         except:
             pass
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
         html_text = await chrome.get_html()
         if not html_text:
             await chrome.quit()
@@ -95,37 +101,30 @@ class SiteCookie(object):
             return cookies, local_storage, ua, "已经登录过且Cookie未失效"
         # 站点配置
         login_conf = self.siteconf.get_login_conf()
-        # 查找用户名输入框
-        html = etree.HTML(html_text)
-        username_xpath = None
-        for xpath in login_conf.get("username"):
-            if html.xpath(xpath):
-                username_xpath = xpath
+        end_time = time.monotonic() + 20
+
+        while time.monotonic() < end_time:
+            html_text = await chrome.get_html()
+            html = etree.HTML(html_text)
+            username_xpath = self.xpath_search(html, login_conf.get("username"))
+            password_xpath = self.xpath_search(html, login_conf.get("password"))
+            submit_xpath = self.xpath_search(html, login_conf.get("submit"))
+            if username_xpath and password_xpath and submit_xpath:
                 break
+            await asyncio.sleep(1)
+
+        # 查找用户名输入框
         if not username_xpath:
             await chrome.quit()
             return None, None, None, "未找到用户名输入框"
         # 查找密码输入框
-        password_xpath = None
-        for xpath in login_conf.get("password"):
-            if html.xpath(xpath):
-                password_xpath = xpath
-                break
         if not password_xpath:
             await chrome.quit()
             return None, None, None, "未找到密码输入框"
         # 查找两步验证码
-        twostepcode_xpath = None
-        for xpath in login_conf.get("twostep"):
-            if html.xpath(xpath):
-                twostepcode_xpath = xpath
-                break
+        twostepcode_xpath = self.xpath_search(html, login_conf.get("twostep"))
         # 查找验证码输入框
-        captcha_xpath = None
-        for xpath in login_conf.get("captcha"):
-            if html.xpath(xpath):
-                captcha_xpath = xpath
-                break
+        captcha_xpath = self.xpath_search(html, login_conf.get("captcha"))
         # 查找验证码图片
         captcha_img_url = None
         if captcha_xpath:
@@ -137,11 +136,6 @@ class SiteCookie(object):
                 await chrome.quit()
                 return None, None, None, "未找到验证码图片"
         # 查找登录按钮
-        submit_xpath = None
-        for xpath in login_conf.get("submit"):
-            if html.xpath(xpath):
-                submit_xpath = xpath
-                break
         if not submit_xpath:
             await chrome.quit()
             return None, None, None, "未找到登录按钮"
@@ -223,12 +217,8 @@ class SiteCookie(object):
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
             return None, None, None, "仿真登录失败：%s" % str(e)
-        # 登录后的源码
-        html_text = await chrome.get_html()
-        if not html_text:
-            await chrome.quit()
-            return None, None, None, "获取源码失败"
-        if SiteHelper.is_logged_in(html_text):
+        logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+        if logged_in:
             cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
             local_storage = await chrome.get_local_storage()
             await chrome.quit()
@@ -241,7 +231,7 @@ class SiteCookie(object):
                     email_xpath = '//input[@id="email"]'
                     email_send_xpath = '//div[@id="code"]/button'
                     code_xpath = '//div[@id="code"]/input'
-                    login_submit_xpath = '//div[@class="ant-card-body"]//form/button'
+                    login_submit_xpath = '//button[@type="submit"]'
 
                     # get user input email
                     email = None
@@ -301,12 +291,12 @@ class SiteCookie(object):
                     if login_submit_obj:
                         await login_submit_obj.mouse_move()
                         await login_submit_obj.mouse_click()
-                    # 等待页面刷新完毕
-                    await chrome.element_not_to_be_clickable(login_submit_xpath, timeout=20)
+                        # 等待页面刷新完毕
+                        await chrome.element_not_to_be_clickable(login_submit_xpath, timeout=20)
 
                     # check again
-                    html_text = await chrome.get_html()
-                    if SiteHelper.is_logged_in(html_text):
+                    logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+                    if logged_in:
                         cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
                         local_storage = await chrome.get_local_storage()
                         await chrome.quit()

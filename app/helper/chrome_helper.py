@@ -2,8 +2,10 @@ import os
 import asyncio
 import psutil
 import re
+import time
 import nodriver as nd
 from nodriver import Tab, Element, Browser
+from nodriver.core.connection import ProtocolException
 from nodriver.core.config import find_chrome_executable
 from urllib.parse import urlparse
 
@@ -222,43 +224,44 @@ class ChromeHelper(object):
         :return: True if the element is clickable, False otherwise.
         :rtype: bool
         """
-        box_model = await self._tab.send(nd.cdp.dom.get_box_model(backend_node_id=element.backend_node_id))
-        size = {"height": 0, "width": 0} if box_model is None else {"height": box_model.height, "width": box_model.width}
-        is_displayed = (size["height"] > 0 and size["width"] > 0)
-        is_enabled = not bool(element.attrs.get("disabled"))
-        return is_displayed and is_enabled
+        if not element or not element.backend_node_id:
+            return False
+        try:
+            box_model = await self._tab.send(nd.cdp.dom.get_box_model(backend_node_id=element.backend_node_id))
+            size = {"height": 0, "width": 0} if box_model is None else {"height": box_model.height, "width": box_model.width}
+            is_displayed = (size["height"] > 0 and size["width"] > 0)
+            is_enabled = not bool(element.attrs.get("disabled"))
+            return is_displayed and is_enabled
+        except ProtocolException:
+            return False
         
     async def element_to_be_clickable(self, selector, timeout=10):
-        try:
-            start_time = asyncio.get_event_loop().time()
-            element = await self._tab.wait_for(text=selector, timeout=timeout)
-            while True:
-                elapsed_time = asyncio.get_event_loop().time() - start_time
-                if elapsed_time > timeout:
-                    raise asyncio.TimeoutError
+        end_time = time.monotonic() + timeout
+        while time.monotonic() < end_time:
+            try:
+                element = await self._tab.wait_for(text=selector, timeout=timeout)
                 is_clickable = await self.is_clickable(element)
                 # is_enabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === false')
                 if is_clickable:
                     return element
-                await asyncio.sleep(0.2)
-        except asyncio.TimeoutError:
-            return False
+            except asyncio.TimeoutError:
+                return False
+            await asyncio.sleep(0.2)
+        return False
     
     async def element_not_to_be_clickable(self, selector, timeout=10):
-        try:
-            start_time = asyncio.get_event_loop().time()
-            element = await self._tab.wait_for(text=selector, timeout=timeout)
-            while True:
-                elapsed_time = asyncio.get_event_loop().time() - start_time
-                if elapsed_time > timeout:
-                    raise asyncio.TimeoutError
+        end_time = time.monotonic() + timeout
+        while time.monotonic() < end_time:
+            try:
+                element = await self._tab.wait_for(text=selector, timeout=timeout)
+                is_clickable = await self.is_clickable(element)
                 # is_disabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === true')
-                is_not_clickable = not await self.is_clickable(element)
-                if is_not_clickable:
+                if not is_clickable:
                     return True
-                await asyncio.sleep(0.2)
-        except asyncio.TimeoutError:
-            return False
+            except asyncio.TimeoutError:
+                return True
+            await asyncio.sleep(0.2)
+        return False
     
     @staticmethod
     async def find_and_click_element(tab:Tab, selector):
@@ -555,7 +558,7 @@ class ChromeHelper(object):
         if self._tab:
             try:
                 local_storage = json.dumps(await self._tab.evaluate("Object.fromEntries(Object.entries(localStorage));"))
-                if local_storage == 'null':
+                if not local_storage or local_storage in ['null', '[]']:
                     return ""
                 return local_storage
             except Exception as err:
@@ -579,26 +582,24 @@ class ChromeHelper(object):
                 # Close all tabs
                 for tab in self._chrome.tabs:
                     await tab.close()
-                # Attempt to close the websocket connection manually
-                if self._chrome.connection:
-                    await self._chrome.connection.aclose()
                 self._chrome.stop()
+                
                 # Wait for the websocket to return True (Closed)
-                while not self._chrome.connection.closed:
-                    # log.debug(f"Websocket status: {self._chrome.connection.closed}")
-                    await asyncio.sleep(0.1)
+                end_time = time.monotonic() + 10
+                while time.monotonic() < end_time:
+                    if self._chrome.connection.closed and not self._chrome._process:
+                        # log.debug(f"Websocket status: {self._chrome.connection.closed}")
+                        break
+                    await asyncio.sleep(0.2)
             except Exception as e:
                 log.error(f"Error during browser closure: {e}")
             finally:
                 # Ensure the browser process is terminated
-                if self._chrome._process:
-                    self._chrome._process.terminate()
-                    await self._chrome._process.wait()
-                self._fixup_uc_pid_leak()
+                self._cleanup_processes()
                 self._tab = None
                 self._chrome = None
 
-    def _fixup_uc_pid_leak(self):
+    def _cleanup_processes(self):
         process_pid = self._chrome._process_pid
         if process_pid is None or not psutil.pid_exists(process_pid):
             return
@@ -606,31 +607,25 @@ class ChromeHelper(object):
         try:
             # Get the list of child processes before closing the Browser instance
             parent_process = psutil.Process(process_pid)
-            child_processes = parent_process.children(recursive=True)
+            processes_to_kill = parent_process.children(recursive=True) + [parent_process]
         except psutil.NoSuchProcess:
             # log.debug(f"Parent process {process_pid} no longer exists")
             return
 
-        for proc in child_processes:
+        for proc in processes_to_kill:
             try:
-                if proc.pid == process_pid:
-                    log.debug(f"Terminating Chromium process with PID: {proc.pid}")
-                    proc.terminate()
-                elif any(name in proc.name().lower() for name in ("chromium", "chrome")):
-                    log.debug(f"Terminating Chromium child process with PID: {proc.pid}")
-                    proc.terminate()
-                elif proc.status() == 'zombie':
-                    log.debug(f"Terminating zombie Chromium process with PID: {proc.pid}")
-                    proc.terminate()
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                log.debug(f"正在终止进程 {proc.pid} ({proc.name()})...")
+                proc.terminate()
+            except psutil.NoSuchProcess:
                 pass
+        
+        _, alive = psutil.wait_procs(processes_to_kill, timeout=5)
 
-        # Wait for all processes to terminate
-        for proc in child_processes:
+        for proc in alive:
             try:
-                if proc.pid == process_pid or any(name in proc.name().lower() for name in ("chromium", "chrome")):
-                    proc.wait(timeout=10)
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                log.debug(f"进程 {proc.pid} 依然存活，强制杀死...")
+                proc.kill()
+            except psutil.NoSuchProcess:
                 pass
 
     def __del__(self):
