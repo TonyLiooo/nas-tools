@@ -438,12 +438,13 @@ class ChromeHelper(object):
                 self._tab = await self._chrome.get(url)
             await self._tab
             await self._tab.wait_for(text="html",timeout=timeout)
+            await asyncio.wait_for(self.check_document_ready(self._tab), timeout)
             if local_storage:
                 await self.set_local_storage(local_storage)
                 await self._tab.get(url)
                 await self._tab
                 await self._tab.wait_for(text="html",timeout=timeout)
-            await asyncio.wait_for(self.check_document_ready(self._tab), timeout)
+                await asyncio.wait_for(self.check_document_ready(self._tab), timeout)
             return True
         except asyncio.TimeoutError:
             log.debug("Timeout: Page did not complete loading within the timeout period.")
@@ -535,12 +536,18 @@ class ChromeHelper(object):
         if not (local_storage and type(local_storage) == dict):
             return
         
+        stability_count = 0
         previous_storage = None
         for _ in range(10):
             current_storage = await self.get_local_storage()
-            if current_storage == previous_storage:
-                break
-            previous_storage = current_storage
+            if current_storage:
+                if current_storage == previous_storage:
+                    stability_count += 1
+                    if stability_count >= 2:
+                        break
+                else:
+                    stability_count = 0
+                previous_storage = current_storage
             await asyncio.sleep(1)
 
         for i in range(3):
@@ -548,6 +555,7 @@ class ChromeHelper(object):
                 for key in local_storage:
                     escaped_value = json.dumps(local_storage[key])
                     await self._tab.evaluate(f'localStorage.setItem("{key}", {escaped_value});')
+                # await self._tab.set_local_storage(local_storage)
                 break
             except Exception as err:
                 if i == 2:
@@ -557,8 +565,9 @@ class ChromeHelper(object):
     async def get_local_storage(self):
         if self._tab:
             try:
-                local_storage = json.dumps(await self._tab.evaluate("Object.fromEntries(Object.entries(localStorage));"))
-                if not local_storage or local_storage in ['null', '[]']:
+                # local_storage = json.dumps(dict(await self._tab.evaluate("Object.fromEntries(Object.entries(localStorage));")))
+                local_storage = json.dumps(await self._tab.get_local_storage())
+                if not local_storage or local_storage == '{}':
                     return ""
                 return local_storage
             except Exception as err:
