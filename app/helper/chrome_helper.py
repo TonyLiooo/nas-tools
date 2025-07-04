@@ -239,11 +239,13 @@ class ChromeHelper(object):
         end_time = time.monotonic() + timeout
         while time.monotonic() < end_time:
             try:
-                element = await self._tab.wait_for(text=selector, timeout=timeout)
+                element = await self._tab.find(text=selector, timeout=timeout)
                 is_clickable = await self.is_clickable(element)
                 # is_enabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === false')
                 if is_clickable:
                     return element
+            except ProtocolException:
+                pass
             except asyncio.TimeoutError:
                 return False
             await asyncio.sleep(0.2)
@@ -253,7 +255,7 @@ class ChromeHelper(object):
         end_time = time.monotonic() + timeout
         while time.monotonic() < end_time:
             try:
-                element = await self._tab.wait_for(text=selector, timeout=timeout)
+                element = await self._tab.find(text=selector, timeout=timeout)
                 is_clickable = await self.is_clickable(element)
                 # is_disabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === true')
                 if not is_clickable:

@@ -360,6 +360,8 @@ class WebAction:
         elif SystemUtils.is_synology():
             os.system(
                 "ps -ef | grep -v grep | grep 'python run.py'|awk '{print $2}'|xargs kill -9")
+        elif SystemUtils.is_docker():
+            os.system("pkill -f 'python3 run.py'")
         else:
             if SystemUtils.check_process('node'):
                 os.system("pm2 restart NAStool")

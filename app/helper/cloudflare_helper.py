@@ -41,7 +41,7 @@ CHALLENGE_SELECTORS = [
     # chaitin
     'button#sl-check'
 ]
-SHORT_TIMEOUT = 10
+SHORT_TIMEOUT = 20
 CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "60"))
 
 
