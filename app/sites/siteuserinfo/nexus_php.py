@@ -188,41 +188,37 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             self._torrent_seeding_page = seeding_url_text[0].strip()
             return self._torrent_seeding_page
 
-        size_col = 3
-        seeders_col = 4
-        # 搜索size列
-        size_col_xpath = '//tr[position()=1]/' \
-                         'td[(img[@class="size"] and img[@alt="size"])' \
-                         ' or (text() = "大小")' \
-                         ' or (a/img[@class="size" and @alt="size"])]'
-        if html.xpath(size_col_xpath):
-            size_col = len(html.xpath(f'{size_col_xpath}/preceding-sibling::td')) + 1
-        # 搜索seeders列
-        seeders_col_xpath = '//tr[position()=1]/' \
-                            'td[(img[@class="seeders"] and img[@alt="seeders"])' \
-                            ' or (text() = "在做种")' \
-                            ' or (a/img[@class="seeders" and @alt="seeders"])]'
-        if html.xpath(seeders_col_xpath):
-            seeders_col = len(html.xpath(f'{seeders_col_xpath}/preceding-sibling::td')) + 1
+        def find_column_index(patterns):
+            for pattern in patterns:
+                elements = html.xpath(pattern)
+                if elements:
+                    return len(html.xpath(f'{pattern}/preceding-sibling::td')) + 1
+            return None
 
-        page_seeding = 0
-        page_seeding_size = 0
+        size_col = find_column_index([
+            '//td[@class="colhead" and contains(text(),"大小")]',
+            '//tr[1]/td[(img[@class="size"] and img[@alt="size"]) or contains(text(),"大小") or (a/img[@class="size" and @alt="size"])]'
+        ]) or 3
+
+        seeders_col = find_column_index([
+            '//td[@class="colhead" and contains(text(),"在做种")]',
+            '//tr[1]/td[(img[@class="seeders"] and img[@alt="seeders"]) or contains(text(),"在做种") or (a/img[@class="seeders" and @alt="seeders"])]'
+        ]) or 5
+
+        table_prefix = '//table[@class="torrents"]' if html.xpath('//table[@class="torrents"]') else ''
+        size_elements = html.xpath(f'{table_prefix}//tr[position()>1]/td[{size_col}]')
+        seeders_elements = html.xpath(f'{table_prefix}//tr[position()>1]/td[{seeders_col}]')
+
         page_seeding_info = []
-        # 如果 table class="torrents"，则增加table[@class="torrents"]
-        table_class = '//table[@class="torrents"]' if html.xpath('//table[@class="torrents"]') else ''
-        seeding_sizes = html.xpath(f'{table_class}//tr[position()>1]/td[{size_col}]')
-        seeding_seeders = html.xpath(f'{table_class}//tr[position()>1]/td[{seeders_col}]/b/a/text()')
-        if not seeding_seeders:
-            seeding_seeders = html.xpath(f'{table_class}//tr[position()>1]/td[{seeders_col}]//text()')
-        if seeding_sizes and seeding_seeders:
-            page_seeding = len(seeding_sizes)
-
-            for i in range(0, len(seeding_sizes)):
-                size = StringUtils.num_filesize(seeding_sizes[i].xpath("string(.)").strip())
-                seeders = StringUtils.str_int(seeding_seeders[i])
-
-                page_seeding_size += size
+        for i, size_elem in enumerate(size_elements):
+            if i < len(seeders_elements):
+                size = StringUtils.num_filesize(size_elem.xpath("string(.)").strip())
+                seeders_text = seeders_elements[i].xpath('.//text()[normalize-space()]')
+                seeders = StringUtils.str_int(seeders_text[0]) if seeders_text else 'None'
                 page_seeding_info.append([seeders, size])
+
+        page_seeding = len(page_seeding_info)
+        page_seeding_size = sum(info[1] for info in page_seeding_info)
 
         self.seeding += page_seeding
         self.seeding_size += page_seeding_size
@@ -233,7 +229,6 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
         next_page_text = html.xpath('//a[contains(.//text(), "下一页") or contains(.//text(), "下一頁") or contains(.//text(), ">")]/@href')
         if next_page_text:
             next_page = next_page_text[-1].strip()
-            # fix up page url
             if self.userid not in next_page:
                 next_page = f'{next_page}&userid={self.userid}&type=seeding'
 
@@ -364,8 +359,16 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
 
     def __get_user_level(self, html):
         # 等级 获取同一行等级数据，图片格式等级，取title信息，否则取文本信息
-        user_levels_text = html.xpath('//tr/td[text()="等級" or text()="等级" or *[text()="等级"]]/'
+        user_levels_text = html.xpath('//tr/td[text()="等級" or text()="等级" or text()="用户等级" or *[text()="等级"]]/'
                                       'following-sibling::td[1]/img[1]/@title')
+        if user_levels_text:
+            self.user_level = user_levels_text[0].strip()
+            return
+
+        user_levels_text = html.xpath('//tr/td[text()="等級" or text()="等级" or text()="用户等级"]/'
+                                      'following-sibling::td[1]/b[@class="fcr"]/@title'
+                                      '|//tr/td[text()="等級" or text()="等级" or text()="用户等级"]/'
+                                      'following-sibling::td[1]/b[@class="fcr"]/text()')
         if user_levels_text:
             self.user_level = user_levels_text[0].strip()
             return
@@ -376,7 +379,6 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             if not StringUtils.is_string_and_not_empty(user_level_element.text):
                 return
             self.user_level = user_level_element.text.strip()
-            log.debug(f"【Sites】站点 {self.site_name} 等级: {self.user_level}")
             return
 
         user_levels_text = html.xpath('//tr/td[text()="等級" or text()="等级"]/'

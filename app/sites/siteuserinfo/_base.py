@@ -14,6 +14,7 @@ from app.helper.cloudflare_helper import under_challenge
 from app.utils import RequestUtils
 from app.utils.types import SiteSchema
 from config import Config
+import asyncio
 
 SITE_BASE_ORDER = 1000
 
@@ -265,13 +266,13 @@ class _ISiteUserInfo(metaclass=ABCMeta):
                         log.error(f"【Sites】{self.site_name} 跳转站点失败")
                         return ""
                     await SiteHelper.wait_for_logged_in(chrome._tab)
-                    await chrome._tab.sleep(1)
+                    await asyncio.sleep(1)
                     return await chrome.get_html()
                 else:
                     log.warn(
                         f"【Sites】{self.site_name} 检测到Cloudflare，需要浏览器仿真，但是浏览器不可用或者未开启浏览器仿真")
                     return ""
-            if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
+            if re.search(r'charset=["\']?utf-?8["\']?', res.text, re.IGNORECASE):
                 res.encoding = "UTF-8"
             else:
                 res.encoding = res.apparent_encoding
