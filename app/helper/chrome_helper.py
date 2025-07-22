@@ -153,6 +153,7 @@ class ChromeHelper(object):
             ),
             None
         )
+        iframe_tab.websocket_url = iframe_tab.websocket_url.replace("iframe", "page")
         return iframe_tab
     
     @staticmethod
@@ -179,7 +180,8 @@ class ChromeHelper(object):
         while position < len(xpath):
             node = prog.match(xpath[position:])
             if node is None:
-                raise "Invalid or unsupported Xpath: %s" % xpath
+                return xpath
+                # raise "Invalid or unsupported Xpath: %s" % xpath
             # log.debug("node found: %s" % node)
             match = node.groupdict()
             # log.debug("broke node down to: %s" % match)
@@ -283,9 +285,8 @@ class ChromeHelper(object):
                         return process_tab, result
 
             iframe_results = await ChromeHelper.find_all_element_in_node(_tab, node_id, 'iframe')
-            for iframe_result in iframe_results:
-                if iframe_result and iframe_result.get('nodeId'):
-                    iframe_node_id = iframe_result['nodeId']
+            if iframe_results and iframe_results.get('nodeIds'):
+                for iframe_node_id in iframe_results["nodeIds"]:
                     process_tab, result = await process_iframe(_tab, iframe_node_id)
                     if result and result.get('nodeId'):
                         return process_tab, result
