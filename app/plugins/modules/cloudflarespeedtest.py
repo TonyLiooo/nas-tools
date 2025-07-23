@@ -786,8 +786,8 @@ class CloudflareSpeedTest(_IPluginModule):
                     release_version = self._version  # 使用上次的版本号
                     install_flag = True
                 else:
-                    self.warn("无法获取远程版本信息，使用默认版本 v2.3.0")
-                    release_version = "v2.3.0"
+                    self.warn("无法获取远程版本信息，使用默认版本 v2.3.4")
+                    release_version = "v2.3.4"
                     install_flag = True
 
         # 确保有有效的版本号
@@ -819,7 +819,7 @@ class CloudflareSpeedTest(_IPluginModule):
             # mac
             uname = SystemUtils.execute('uname -m')
             arch = 'amd64' if uname == 'x86_64' else 'arm64'
-            cf_file_name = f'CloudflareST_darwin_{arch}.zip'
+            cf_file_name = f'cfst_darwin_{arch}.zip'
             download_url = f'{self._release_prefix}/{release_version}/{cf_file_name}'
             return self.__os_install(download_url, cf_file_name, release_version,
                                      f"ditto -V -x -k --sequesterRsrc {self._cf_path}/{cf_file_name} {self._cf_path}",
@@ -828,7 +828,7 @@ class CloudflareSpeedTest(_IPluginModule):
             # docker
             uname = SystemUtils.execute('uname -m')
             arch = 'amd64' if uname == 'x86_64' else 'arm64'
-            cf_file_name = f'CloudflareST_linux_{arch}.tar.gz'
+            cf_file_name = f'cfst_linux_{arch}.tar.gz'
             download_url = f'{self._release_prefix}/{release_version}/{cf_file_name}'
             return self.__os_install(download_url, cf_file_name, release_version,
                                      f"tar -zxf {self._cf_path}/{cf_file_name} -C {self._cf_path}",
