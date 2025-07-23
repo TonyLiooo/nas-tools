@@ -70,7 +70,7 @@ class CloudflareSpeedTest(_IPluginModule):
     _cf_ipv6 = None
     _result_file = None
     _release_prefix = 'https://github.com/XIU2/CloudflareSpeedTest/releases/download'
-    _binary_name = 'CloudflareST'
+    _binary_name = 'cfst'
     _test_url = None
     _httping = False
     _delay_limit = None
