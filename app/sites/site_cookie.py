@@ -225,6 +225,7 @@ class SiteCookie(object):
             return cookies, local_storage, ua, ""
         else:
             if url.find("m-team") != -1:
+                html_text = await chrome.get_html()
                 if "郵箱驗證碼" in html_text:
                     await asyncio.sleep(5)
                     # email handler
