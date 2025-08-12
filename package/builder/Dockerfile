@@ -1,11 +1,11 @@
-FROM python:3.11.10-slim-bookworm AS builder
+FROM python:3.12.8-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y git binutils && apt-get clean
 
 ARG branch
 
 ENV NASTOOL_CONFIG=/nas-tools/config/config.yaml
-ENV py_site_packages=/usr/local/lib/python3.11/site-packages
+ENV py_site_packages=/usr/local/lib/python3.12/site-packages
 
 RUN python -m pip install --upgrade pip setuptools
 RUN pip install wheel cython pyinstaller
