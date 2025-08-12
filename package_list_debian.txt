@@ -1,4 +1,3 @@
-apt-transport-https
 apt-utils
 bash
 ca-certificates
@@ -9,14 +8,14 @@ fuse3
 git
 inotify-tools
 locales
-musl-dev
+libc6-dev
 netcat-openbsd
 procps
-redis
+redis-server
 sudo
 tzdata
 wget
 xvfb
 zip
+unzip
 chromium
-python3-libtorrent

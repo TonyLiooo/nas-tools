@@ -15,4 +15,3 @@ wget
 xvfb
 zip
 chromium
-py3-libtorrent-rasterbar
