@@ -59,11 +59,11 @@ class SiteConf:
             '//img[contains(@src,"/api/getCaptcha")]/@src'
         ],
         "submit": [
-            '//input[@type="submit"]',
-            '//button[@type="submit"]',
+            '//input[@type="submit" or @id="submit-btn" or @id="submit"]',
+            '//button[@type="submit" or @id="submit-btn" or @id="submit"]',
             '//button[@lay-filter="login"]',
             '//button[@lay-filter="formLogin"]',
-            '//input[@type="button"][@value="登录"]'
+            '//input[@type="button"][@value="登录" or @value="登錄"]'
         ],
         "error": [
             "//table[@class='main']//td[@class='text']/text()"
