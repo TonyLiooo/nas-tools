@@ -936,6 +936,54 @@ class ModuleConf(object):
                 }
             }
         },
+        "feiniu": {
+            "name": "飞牛影视",
+            "img_url": "../static/img/mediaserver/feiniu.png",
+            "background": "bg-blue",
+            "test_command": "app.mediaserver.client.feiniu|FeiNiu",
+            "config": {
+                "host": {
+                    "id": "feiniu.host",
+                    "required": True,
+                    "title": "服务器地址",
+                    "tooltip": "配置飞牛影视服务器IP地址和端口，如为https则需要增加https://前缀",
+                    "type": "text",
+                    "placeholder": "http://127.0.0.1:5666"
+                },
+                "username": {
+                    "id": "feiniu.username",
+                    "required": True,
+                    "title": "用户名",
+                    "tooltip": "飞牛影视登录用户名",
+                    "type": "text",
+                    "placeholder": ""
+                },
+                "password": {
+                    "id": "feiniu.password",
+                    "required": True,
+                    "title": "密码",
+                    "tooltip": "飞牛影视登录密码",
+                    "type": "password",
+                    "placeholder": ""
+                },
+                "play_host": {
+                    "id": "feiniu.play_host",
+                    "required": False,
+                    "title": "媒体播放地址",
+                    "tooltip": "配置播放设备的访问地址，用于媒体详情页跳转播放页面；如为https则需要增加https://前缀，留空则默认与服务器地址一致",
+                    "type": "text",
+                    "placeholder": "http://127.0.0.1:5666"
+                },
+                "sync_libraries": {
+                    "id": "feiniu.sync_libraries",
+                    "required": False,
+                    "title": "同步媒体库",
+                    "tooltip": "指定要同步的媒体库ID，多个用英文逗号分隔，留空或填写'all'表示同步所有媒体库",
+                    "type": "text",
+                    "placeholder": "all"
+                }
+            }
+        },
     }
 
     # 索引器

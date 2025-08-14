@@ -46,14 +46,21 @@
       {{ FORM.gen_form_config_elements(Type, Config, MediaServer.config) }}
       </div>
       <div class="modal-footer">
-        <a href="javascript:test_mediaserver_config('{{ Type }}')" id="{{ Type }}_test_btn" class="btn">
-          测试
-        </a>
-        {% if Config.get(Type) %}
-        <button onclick="javascript:window.open('{{Config.get(Type).get('host')}}', '_blank');" id="goto_btn" class="btn me-auto">
-          跳转
-        </button>
-        {% endif %}
+        <div class="me-auto">
+          <a href="javascript:test_mediaserver_config('{{ Type }}')" id="{{ Type }}_test_btn" class="btn me-2">
+            测试
+          </a>
+          {% if Config.get(Type) %}
+          <button onclick="javascript:window.open('{{Config.get(Type).get('host')}}', '_blank');" id="goto_btn" class="btn me-2">
+            跳转
+          </button>
+          {% endif %}
+          {% if Config.media.media_server == Type %}
+          <a href="javascript:refresh_mediaserver_library('{{ Type }}')" id="{{ Type }}_refresh_btn" class="btn btn-outline-secondary">
+            刷新媒体库
+          </a>
+          {% endif %}
+        </div>
         <a href="javascript:save_mediaserver_config('{{ Type }}')" id="{{ Type }}_save_btn" class="btn btn-primary">
           确定
         </a>
@@ -101,5 +108,23 @@
         }
       });
     }, true);
+  }
+
+  //刷新媒体库
+  function refresh_mediaserver_library(type) {
+    $("#" + type + "_refresh_btn").text("刷新中...").attr("disabled", true);
+    ajax_post("refresh_mediaserver", {"type": type}, function (ret) {
+      if (ret.code === 0) {
+        $("#" + type + "_refresh_btn").text("刷新成功").attr("disabled", false);
+        setTimeout(function() {
+          $("#" + type + "_refresh_btn").text("刷新媒体库").attr("disabled", false);
+        }, 2000);
+      } else {
+        $("#" + type + "_refresh_btn").text("刷新失败").attr("disabled", false);
+        setTimeout(function() {
+          $("#" + type + "_refresh_btn").text("刷新媒体库").attr("disabled", false);
+        }, 2000);
+      }
+    });
   }
 </script>

@@ -94,6 +94,7 @@ class WebAction:
             "re_identification": self.re_identification,
             "media_info": self.__media_info,
             "test_connection": self.__test_connection,
+            "refresh_mediaserver": self.__refresh_mediaserver,
             "user_manager": self.__user_manager,
             "refresh_rss": self.__refresh_rss,
             "delete_tmdb_cache": self.__delete_tmdb_cache,
@@ -1723,6 +1724,44 @@ class WebAction:
                 ExceptionUtils.exception_traceback(e)
             return {"code": 0 if ret else 1}
         return {"code": 0}
+
+    @staticmethod
+    def __refresh_mediaserver(data):
+        """
+        刷新媒体服务器媒体库
+        """
+        try:
+            from app.mediaserver import MediaServer
+
+            # 获取媒体服务器类型
+            server_type = data.get("type")
+            if not server_type:
+                return {"code": 1, "msg": "未指定媒体服务器类型"}
+
+            # 获取MediaServer实例
+            ms = MediaServer()
+
+            # 检查当前配置的媒体服务器是否与请求的类型一致
+            current_type = str(ms.get_type()).split('.')[-1].lower()
+            if current_type != server_type.lower():
+                return {"code": 1, "msg": f"当前媒体服务器类型为{current_type}，与请求类型{server_type}不匹配"}
+
+            # 确保服务器连接正常
+            server = ms.server
+            if not server.get_status():
+                return {"code": 1, "msg": "无法连接到媒体服务器，请检查配置"}
+
+            # 执行刷新
+            result = ms.refresh_root_library()
+
+            if result:
+                return {"code": 0, "msg": "媒体库刷新成功"}
+            else:
+                return {"code": 1, "msg": "媒体库刷新失败，请检查权限或服务器状态"}
+
+        except Exception as e:
+            ExceptionUtils.exception_traceback(e)
+            return {"code": 1, "msg": f"刷新媒体库时发生异常：{str(e)}"}
 
     @staticmethod
     def __user_manager(data):
