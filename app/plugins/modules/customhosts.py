@@ -358,14 +358,16 @@ class CustomHosts(_IPluginModule):
 
         # 启动服务
         if hosts_enabled or self._subscribe_enabled:
-            self._scheduler = BackgroundScheduler(timezone=Config().get_timezone())
+            timezone_str = Config().get_timezone()
+            timezone_obj = pytz.timezone(timezone_str) if timezone_str else pytz.UTC
+            self._scheduler = BackgroundScheduler(timezone=timezone_obj)
             
             # 立即运行一次
             if self._onlyonce:
                 if self._subscribe_enabled and self._subscriptions:
                     self.info("订阅服务启动，立即运行一次")
                     self._scheduler.add_job(self.__run_subscribe_task, 'date',
-                                            run_date=datetime.now(tz=Config().get_timezone()) + timedelta(seconds=3))
+                                            run_date=datetime.now(tz=timezone_obj) + timedelta(seconds=3))
                 elif not self._subscribe_enabled:
                     self.warn("订阅功能未启用，立即订阅操作已忽略")
                 # 重置开关
