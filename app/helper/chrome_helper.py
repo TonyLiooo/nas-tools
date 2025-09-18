@@ -596,11 +596,10 @@ class ChromeHelper(object):
                     await tab.close()
                 self._chrome.stop()
                 
-                # Wait for the websocket to return True (Closed)
+                # Wait for the browser process to be terminated
                 end_time = time.monotonic() + 10
                 while time.monotonic() < end_time:
-                    if self._chrome.connection.closed and not self._chrome._process:
-                        # log.debug(f"Websocket status: {self._chrome.connection.closed}")
+                    if not self._chrome._process:
                         break
                     await asyncio.sleep(0.2)
             except Exception as e:
