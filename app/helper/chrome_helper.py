@@ -591,11 +591,7 @@ class ChromeHelper(object):
     async def quit(self):
         if self._chrome:
             try:
-                # Close all tabs
-                for tab in self._chrome.tabs:
-                    await tab.close()
                 self._chrome.stop()
-                
                 # Wait for the browser process to be terminated
                 end_time = time.monotonic() + 10
                 while time.monotonic() < end_time:
