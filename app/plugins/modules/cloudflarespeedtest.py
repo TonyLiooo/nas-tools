@@ -41,9 +41,9 @@ class CloudflareSpeedTest(_IPluginModule):
     # 插件版本
     module_version = "2.0"
     # 插件作者
-    module_author = "tonyliooo"  # V1.0 thsrite
+    module_author = "TonyLiooo"  # V1.0 thsrite
     # 作者主页
-    author_url = "https://github.com/tonyliooo"
+    author_url = "https://github.com/TonyLiooo"
     # 插件配置项ID前缀
     module_config_prefix = "cloudflarespeedtest_"
     # 加载顺序
@@ -470,12 +470,23 @@ class CloudflareSpeedTest(_IPluginModule):
                     else:
                         new_hosts.append(host)
 
-        # 更新自定义Hosts
-        self.update_config({
-            "hosts": new_hosts,
-            "err_hosts": err_hosts,
-            "enable": enable
-        }, "CustomHosts")
+        # 更新自定义Hosts（智能保留所有其他配置项）
+        if customHosts:
+            # 基于现有配置进行更新，保留所有其他字段
+            current_config = customHosts.copy()  # 复制完整配置
+            # 只更新需要修改的字段
+            current_config["hosts"] = new_hosts
+            current_config["err_hosts"] = err_hosts
+            current_config["enable"] = enable
+        else:
+            # 如果没有现有配置，创建基础配置
+            current_config = {
+                "hosts": new_hosts,
+                "err_hosts": err_hosts,
+                "enable": enable
+            }
+        
+        self.update_config(current_config, "CustomHosts")
 
         # 更新优选ip
         old_ip = self._cf_ip
@@ -707,12 +718,27 @@ class CloudflareSpeedTest(_IPluginModule):
         # 统计每个IP地址出现的次数
         ip_count = {}
         for host in hosts:
-            ip = host.split()[0]
+            if not host or not host.strip():
+                continue
+            
+            host_parts = host.split()
+            if not host_parts:
+                continue
+                
+            ip = host_parts[0]
+            if not ip or ip.startswith('#'):
+                continue
+                
             if ip in ip_count:
                 ip_count[ip] += 1
             else:
                 ip_count[ip] = 1
 
+        # 如果没有有效的IP数据，直接返回
+        if not ip_count:
+            self.debug("没有找到有效的hosts数据，跳过CF IP校正")
+            return
+        
         # 找出出现次数最多的IP地址
         max_ips = []  # 保存最多出现的IP地址
         max_count = 0

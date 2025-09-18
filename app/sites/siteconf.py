@@ -39,11 +39,14 @@ class SiteConf:
     _SITE_LOGIN_XPATH = {
         "username": [
             '//input[@name="username"]',
+            '//input[@class="username"]',
             '//input[@id="form_item_username"]',
             '//input[@id="username"]'
         ],
         "password": [
             '//input[@name="password"]',
+            '//input[@class="password"]',
+            '//input[@type="password"]',
             '//input[@id="form_item_password"]',
             '//input[@id="password"]'
         ],
@@ -59,6 +62,7 @@ class SiteConf:
             '//img[contains(@src,"/api/getCaptcha")]/@src'
         ],
         "submit": [
+            '//input[@id="submit-btn"]',
             '//input[@type="submit" or @id="submit-btn" or @id="submit"]',
             '//button[@type="submit" or @id="submit-btn" or @id="submit"]',
             '//button[@lay-filter="login"]',

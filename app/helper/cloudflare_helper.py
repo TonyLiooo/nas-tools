@@ -39,7 +39,9 @@ CHALLENGE_SELECTORS = [
     # Fairlane / pararius.com
     'div.vc div.text-box h2',
     # chaitin
-    'button#sl-check'
+    'button#sl-check',
+    # Slider verification
+    '#dragContainer', '#dragHandler', '.dragHandlerBg'
 ]
 SHORT_TIMEOUT = 20
 CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "60"))
@@ -164,8 +166,80 @@ async def _evil_logic(tab: Tab):
         log.info("Challenge not detected!")
 
 
+async def drag_slider_verify(tab: Tab):
+    """
+    Handle slider verification with multiple slider types
+    """
+    slider_configs = [
+        {'container': '#dragContainer', 'handler': '#dragHandler'},
+        {'container': '.slider-verify', 'handler': '.slider-handle'},
+        {'container': '.captcha-slider', 'handler': '.captcha-handle'},
+        {'container': '.slide-verify', 'handler': '.slide-handler'}
+    ]
+    
+    for config in slider_configs:
+        try:
+            drag_container = await tab.query_selector(config['container'])
+            if not drag_container:
+                continue
+                
+            drag_handler = await tab.query_selector(config['handler'])
+            if not drag_handler:
+                continue
+            
+            log.debug(f"Found slider - container: {config['container']}, handler: {config['handler']}")
+            
+            await drag_handler.scroll_into_view()
+            
+            container_box = await drag_container.get_position()
+            handler_box = await drag_handler.get_position()
+            
+            if not container_box or not handler_box:
+                continue
+            
+            # Calculate drag distance (leave 5px margin)
+            drag_distance = container_box.width - handler_box.width - 5
+            
+            if drag_distance <= 0:
+                continue
+            
+            log.debug(f"Attempting to drag slider {drag_distance}px")
+            
+            # Perform drag operation
+            target_coordinates = (drag_distance, 0)
+            await drag_handler.mouse_drag(
+                destination=target_coordinates,
+                relative=True,
+                steps=30
+            )
+            
+            # Wait until slider handler disappears (verification completed)
+            wait_success = await _wait_until_condition(
+                tab, 
+                [config['handler']], 
+                async_match_selectors_not, 
+                async_type=True, 
+                timeout=10, 
+                message="slider handler disappears"
+            )
+            
+            if wait_success:
+                log.debug("Slider verification completed successfully")
+                return True
+            else:
+                log.debug("Slider verification timeout - handler did not disappear")
+                return False
+                
+        except Exception:
+            continue
+    
+    return False
+
+
 async def click_verify(tab: Tab):
     from app.helper import ChromeHelper
+
+    # Try Cloudflare checkbox verification
     try:
         log.debug("Try to find the Cloudflare verify checkbox")
         selector = "input[type=checkbox]"
@@ -174,14 +248,23 @@ async def click_verify(tab: Tab):
     except Exception as e:
         log.debug(f"Cloudflare verify checkbox not found: {str(e)}")
 
+    # Try chaitin verification button
     try:
         log.debug("Try to find the chaitin verify checkbox")
         selector = "button[@id='sl-check']"
         await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
-        log.debug("Cloudflare verify checkbox found and clicked")
+        log.debug("chaitin verify checkbox found and clicked")
     except Exception as e:
         log.debug(f"chaitin verify checkbox not found: {str(e)}")
-
+        
+    # Try slider verification first
+    try:
+        if await drag_slider_verify(tab):
+            log.debug("Slider verification completed successfully")
+            return
+    except Exception as e:
+        log.debug(f"Slider verification error: {str(e)}")
+    
     try:
         await asyncio.wait_for(check_document_ready(tab), 20)
     except asyncio.TimeoutError:
