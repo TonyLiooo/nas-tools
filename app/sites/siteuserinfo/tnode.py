@@ -24,7 +24,7 @@ class TNodeSiteUserInfo(_ISiteUserInfo):
         csrf_token = re.search(r'<meta name="x-csrf-token" content="(.+?)">', html_text)
         if csrf_token:
             self._addition_headers = {'X-CSRF-TOKEN': csrf_token.group(1)}
-            self._user_detail_page = "api/user/getMainInfo"
+            self._user_traffic_page = "api/user/getMainInfo"
             self._torrent_seeding_page = f"api/user/listTorrentActivity?id=&type=seeding&size={self.tnNodeLimitPageSize}&page=1"
 
     def _parse_logged_in(self, html_text):
@@ -40,9 +40,6 @@ class TNodeSiteUserInfo(_ISiteUserInfo):
         self.username = self.userid
 
     def _parse_user_traffic_info(self, html_text):
-        pass
-
-    def _parse_user_detail_info(self, html_text):
         detail = json.loads(html_text)
         if detail.get("status") != 200:
             return
@@ -61,7 +58,19 @@ class TNodeSiteUserInfo(_ISiteUserInfo):
 
         self.message_unread = user_info.get("unreadAdmin", 0) + user_info.get("unreadInbox", 0) + user_info.get(
             "unreadSystem", 0)
-        pass
+
+        self._user_detail_page = f"api/user/getInfo?id={self.userid}"
+
+    def _parse_user_detail_info(self, html_text):
+        detail = json.loads(html_text)
+        if detail.get("status") != 200:
+            return
+
+        user_info = detail.get("data", {})
+        
+        last_activity_timestamp = user_info.get("lastActivity")
+        if last_activity_timestamp:
+            self.last_seen = StringUtils.timestamp_to_date(last_activity_timestamp)
 
     def _parse_user_torrent_seeding_info(self, html_text, multi_page=False):
         """

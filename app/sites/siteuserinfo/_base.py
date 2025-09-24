@@ -162,6 +162,16 @@ class _ISiteUserInfo(metaclass=ABCMeta):
             self.message_unread_contents.append((head, date, content))
 
     async def _parse_seeding_pages(self):
+        if self._user_detail_page:
+            referer_url = urljoin(self._base_url, self._user_detail_page)
+            self._torrent_seeding_headers = {
+                "Referer": referer_url,
+                "Accept-Language": "zh-CN,zh;q=0.9", 
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors", 
+                "Sec-Fetch-Site": "same-origin",
+                "X-Requested-With": "XMLHttpRequest",
+            }
         if self._torrent_seeding_page:
             # 第一页
             next_page = self._parse_user_torrent_seeding_info(
@@ -249,7 +259,7 @@ class _ISiteUserInfo(metaclass=ABCMeta):
                                headers=req_headers).get_res(url=url)
         if (res is None and self._emulate) or (res is not None and res.status_code in (200, 500, 403)):
             # 如果cloudflare 有防护，尝试使用浏览器仿真
-            if res is None or (under_challenge(res.text) or not SiteHelper.is_logged_in(res.text)):
+            if res is None or (under_challenge(res.text) or (not SiteHelper.is_logged_in(res.text) and not SiteHelper.is_api_logged_in(res.text))):
                 log.debug(f"【Sites】{self.site_name} 检测到Cloudflare或未获取到登录数据，需要浏览器仿真")
                 if self.chrome:
                     chrome = self.chrome
@@ -272,11 +282,17 @@ class _ISiteUserInfo(metaclass=ABCMeta):
                     log.warn(
                         f"【Sites】{self.site_name} 检测到Cloudflare，需要浏览器仿真，但是浏览器不可用或者未开启浏览器仿真")
                     return ""
-            if re.search(r'charset=["\']?utf-?8["\']?', res.text, re.IGNORECASE):
-                res.encoding = "UTF-8"
-            else:
-                res.encoding = res.apparent_encoding
-            return res.text
+            res.encoding = res.apparent_encoding or 'utf-8'
+            try:
+                if re.search(r'charset=["\']?utf-?8["\']?', res.text, re.IGNORECASE):
+                    res.encoding = "UTF-8"
+            except UnicodeDecodeError:
+                pass
+            try:
+                html_text = res.content.decode(res.encoding)
+            except UnicodeDecodeError:
+                html_text = res.content.decode('utf-8', errors='ignore')
+            return html_text
 
         return ""
 

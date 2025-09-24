@@ -266,7 +266,7 @@
                         <span class="d-none d-lg-block">{{ item.join_at | string | truncate(10, True, '') }}</span>
                       </td>
                       <td class="sort-ltime">
-                        <span class="d-none d-lg-block">{{ item.last_seen }}</span>
+                        <span class="d-none d-lg-block">{{ item.last_seen | replace('\n', '<br>') | safe }}</span>
                       </td>
                       <td class="sort-rtime">
                         <span class="d-none d-lg-block">{{ item.update_at }}</span>

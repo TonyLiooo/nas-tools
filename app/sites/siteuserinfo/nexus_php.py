@@ -182,7 +182,7 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             return None
 
         # 首页存在扩展链接，使用扩展链接
-        seeding_url_text = html.xpath('//a[contains(@href,"torrents.php") '
+        seeding_url_text = html.xpath('//a[(contains(@href,"torrents.php") or contains(@href,"usertorrentlist.php")) '
                                       'and contains(@href,"seeding")]/@href')
         if multi_page is False and seeding_url_text and seeding_url_text[0].strip():
             self._torrent_seeding_page = seeding_url_text[0].strip()
@@ -261,7 +261,25 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             '|//div/b[text()="最近动向"]/../text()|//span[text()="最近動向："]/following-sibling::span[1]/text()'
         )
         if last_seen_text:
-            self.last_seen = StringUtils.unify_datetime_str(last_seen_text[0].split(' (')[0].strip())
+            # 获取冒号前的连续字符 + 标准时间
+            full_text = ''.join(last_seen_text)
+            
+            # 连续非空字符 + 冒号 + 标准时间
+            time_pattern = r'([^\s:：]+)[:：]\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
+            time_matches = re.findall(time_pattern, full_text)
+            
+            if time_matches:
+                time_lines = []
+                seen_labels = set()
+                for label, abs_time in time_matches:
+                    if label and label not in seen_labels:
+                        seen_labels.add(label)
+                        unified_time = StringUtils.unify_datetime_str(abs_time)
+                        if unified_time:
+                            time_lines.append(f"{label}: {unified_time}")
+                self.last_seen = '\n'.join(time_lines)
+            else:
+                self.last_seen = StringUtils.unify_datetime_str(last_seen_text[0].split(' (')[0].strip())
 
         upload_match = re.search(r"[^总]上[传傳]量?[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+[KMGTPI]*B)", html_text,
                                  re.IGNORECASE)

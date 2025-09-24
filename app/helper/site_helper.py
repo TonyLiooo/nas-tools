@@ -2,6 +2,7 @@
 from datetime import datetime
 import os
 import re
+import json
 
 from lxml import etree
 
@@ -44,6 +45,44 @@ class SiteHelper:
         if seedersList:
             return True
         return False
+
+    @classmethod
+    def is_api_logged_in(cls, text):
+        """
+        判断API JSON响应是否已登录
+        :param text: 响应文本
+        :return: bool
+        """
+        try:
+            data = json.loads(text)
+
+            # 检查是否为API响应格式
+            if not isinstance(data, dict):
+                return False
+            
+            # 检查HTTP状态码
+            if data.get('status') != 200:
+                return False
+            
+            # 检查是否有数据
+            user_data = data.get('data')
+            if not isinstance(user_data, dict):
+                return False
+            
+            # 检查是否有做种数据
+            torrents = user_data.get('torrents', [])
+            if torrents:
+                return True
+            
+            # 检查用户基本信息
+            username = user_data.get('username')
+            user_id = user_data.get('id')
+            if username or user_id:
+                return True
+
+            return False
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            return False
     
     @staticmethod
     async def wait_for_logged_in(tab:Tab, timeout=30):
