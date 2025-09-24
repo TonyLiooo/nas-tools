@@ -127,14 +127,14 @@ class ChromeHelper(object):
             "nodeId": node_id,
             # "depth": -1,
             "pierce": True
-        }))
+        }), _is_update=True)
     
     @staticmethod
     async def find_element_in_node(tab:Tab, node_id, selector):
         result = await tab.send(ChromeHelper.cdp_generator("DOM.querySelector", {
             "nodeId": node_id,
             "selector": ChromeHelper.xpath_to_css(selector)
-        }))
+        }), _is_update=True)
         return result
     
     @staticmethod
@@ -142,7 +142,7 @@ class ChromeHelper(object):
         results = await tab.send(ChromeHelper.cdp_generator("DOM.querySelectorAll", {
             "nodeId": node_id,
             "selector": ChromeHelper.xpath_to_css(selector)
-        }))
+        }), _is_update=True)
         return results
     
     @staticmethod
@@ -153,7 +153,8 @@ class ChromeHelper(object):
             ),
             None
         )
-        iframe_tab.websocket_url = iframe_tab.websocket_url.replace("iframe", "page")
+        if iframe_tab:
+            iframe_tab.websocket_url = iframe_tab.websocket_url.replace("iframe", "page")
         return iframe_tab
     
     @staticmethod
@@ -229,7 +230,7 @@ class ChromeHelper(object):
         if not element or not element.backend_node_id:
             return False
         try:
-            box_model = await self._tab.send(nd.cdp.dom.get_box_model(backend_node_id=element.backend_node_id))
+            box_model = await self._tab.send(nd.cdp.dom.get_box_model(backend_node_id=element.backend_node_id), _is_update=True)
             size = {"height": 0, "width": 0} if box_model is None else {"height": box_model.height, "width": box_model.width}
             is_displayed = (size["height"] > 0 and size["width"] > 0)
             is_enabled = not bool(element.attrs.get("disabled"))
@@ -268,8 +269,22 @@ class ChromeHelper(object):
         return False
     
     @staticmethod
-    async def find_and_click_element(tab:Tab, selector):
-        async def process_node(_tab:Tab, node):    
+    async def find_and_click_element(tab:Tab, selector, click_enabled=True, max_depth=-1, timeout=10):
+        """
+        查找元素并可选择点击
+        :param tab: Tab对象
+        :param selector: CSS选择器
+        :param click_enabled: 是否点击元素
+        :param max_depth: 最大递归深度，-1表示不限制递归深度，默认-1
+        :param timeout: 超时时间(秒)，防止长时间卡死，默认10秒
+        :return: (found: bool, coordinates: tuple/None)
+                 - found: True表示找到元素，False表示未找到
+                 - coordinates: 元素坐标(x, y)，未找到时为None
+        """
+        async def process_node(_tab:Tab, node, depth=0):    
+            if max_depth >= 0 and depth > max_depth:
+                return _tab, None
+                
             node_id = node['nodeId'] if 'nodeId' in node else None
             if not node_id:
                 return _tab, None
@@ -280,59 +295,80 @@ class ChromeHelper(object):
 
             if 'shadowRoots' in node:
                 for shadow_root in node['shadowRoots']:
-                    process_tab, result = await process_node(_tab, shadow_root)
+                    process_tab, result = await process_node(_tab, shadow_root, depth + 1)
                     if result and result.get('nodeId'):
                         return process_tab, result
 
             iframe_results = await ChromeHelper.find_all_element_in_node(_tab, node_id, 'iframe')
             if iframe_results and iframe_results.get('nodeIds'):
                 for iframe_node_id in iframe_results["nodeIds"]:
-                    process_tab, result = await process_iframe(_tab, iframe_node_id)
+                    process_tab, result = await process_iframe(_tab, iframe_node_id, depth + 1)
                     if result and result.get('nodeId'):
                         return process_tab, result
 
             if 'children' in node:
-                process_tab, result = await process_child(_tab, node)
+                process_tab, result = await process_child(_tab, node, depth + 1)
                 if result and result.get('nodeId'):
                     return process_tab, result
             
             return _tab, None
 
-        async def process_iframe(_tab:Tab, node_id):
-            iframe_response = await ChromeHelper.describe_node(_tab, node_id)
-            frame_id = iframe_response['node']['frameId']
-            iframe_tab = await ChromeHelper.switch_to_frame(_tab.browser, frame_id)
-            if iframe_tab:
-                iframe_document = await iframe_tab.send(ChromeHelper.cdp_generator("DOM.getDocument", {"depth": -1, "pierce": True}))
-                process_tab, result = await process_node(iframe_tab, iframe_document['root'])
-                if result and result.get('nodeId'):
-                    return process_tab, result
+        async def process_iframe(_tab:Tab, node_id, depth=0):
+            if max_depth >= 0 and depth > max_depth:
+                return _tab, None
+            try:
+                iframe_response = await ChromeHelper.describe_node(_tab, node_id)
+                frame_id = iframe_response['node']['frameId']
+                iframe_tab = await ChromeHelper.switch_to_frame(_tab.browser, frame_id)
+                if iframe_tab:
+                    iframe_document = await iframe_tab.send(ChromeHelper.cdp_generator("DOM.getDocument", {"depth": -1, "pierce": True}), _is_update=True)
+                    process_tab, result = await process_node(iframe_tab, iframe_document['root'], depth + 1)
+                    if result and result.get('nodeId'):
+                        return process_tab, result
+            except Exception:
+                pass
             return _tab, None
 
-        async def process_child(_tab:Tab, node):
+        async def process_child(_tab:Tab, node, depth=0):
+            if max_depth >= 0 and depth > max_depth:
+                return _tab, None
             if 'children' in node:
                 for child in node.get('children'):
                     if 'shadowRoots' in child:
                         for shadow_root in child['shadowRoots']:
-                            process_tab, result = await process_node(_tab, shadow_root)
+                            process_tab, result = await process_node(_tab, shadow_root, depth + 1)
                             if result and result.get('nodeId'):
                                 return process_tab, result
                     if 'children' in child:
-                        process_tab, result = await process_child(_tab, child)
+                        process_tab, result = await process_child(_tab, child, depth + 1)
                         if result and result.get('nodeId'):
                             return process_tab, result
             return _tab, None
 
-        document = await tab.send(ChromeHelper.cdp_generator("DOM.getDocument", {"depth": -1, "pierce": True}))
-        process_tab, result = await process_node(tab, document['root'])
+        try:
+            async def execute_element_search():
+                document = await tab.send(ChromeHelper.cdp_generator("DOM.getDocument", {"depth": -1, "pierce": True}), _is_update=True)
+                process_tab, result = await process_node(tab, document['root'])
 
-        if result is None or 'nodeId' not in result or result['nodeId'] is None:
-            raise Exception(f"Element with selector '{selector}' not found.")
-        
-        node_id = result['nodeId']
-        box_model = await process_tab.send(ChromeHelper.cdp_generator('DOM.getBoxModel', {
-            'nodeId': node_id
-        }))
+                if result is None or 'nodeId' not in result or result['nodeId'] is None:
+                    return False, None
+                
+                node_id = result['nodeId']
+                box_model = await process_tab.send(ChromeHelper.cdp_generator('DOM.getBoxModel', {
+                    'nodeId': node_id
+                }), _is_update=True)
+                return process_tab, result, box_model, node_id
+            
+            search_result = await asyncio.wait_for(execute_element_search(), timeout=timeout)
+            if len(search_result) == 2:  # 返回了 False, None
+                return search_result
+            process_tab, result, box_model, node_id = search_result
+            
+        except asyncio.TimeoutError:
+            log.debug(f"find_and_click_element timed out after {timeout} seconds")
+            return False, None
+        except Exception:
+            return False, None
 
         if 'model' in box_model and 'content' in box_model['model']:
             content = box_model['model']['content']
@@ -340,36 +376,51 @@ class ChromeHelper(object):
             x_max, y_max = content[4], content[5]
             x_center = (x_min + x_max) / 2
             y_center = (y_min + y_max) / 2
+            coordinates = (x_center, y_center)
 
-            await process_tab.send(ChromeHelper.cdp_generator('DOM.scrollIntoViewIfNeeded', {
-                'nodeId': node_id
-            }))
+            if click_enabled:
+                await process_tab.send(ChromeHelper.cdp_generator('DOM.scrollIntoViewIfNeeded', {
+                    'nodeId': node_id
+                }), _is_update=True)
 
-            await asyncio.gather(
-                process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
-                    'type': 'mouseMoved',
-                    'x': x_center,
-                    'y': y_center,
-                    'button': 'none'
-                })),
+                await asyncio.gather(
+                    process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+                        'type': 'mouseMoved',
+                        'x': x_center,
+                        'y': y_center,
+                        'button': 'none'
+                    }), _is_update=True),
 
-                process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
-                    'type': 'mousePressed',
-                    'x': x_center,
-                    'y': y_center,
-                    'button': 'left',
-                    'clickCount': 1
-                })),
-                process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
-                    'type': 'mouseReleased',
-                    'x': x_center,
-                    'y': y_center,
-                    'button': 'left',
-                    'clickCount': 1
-                }))
-            )
+                    process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+                        'type': 'mousePressed',
+                        'x': x_center,
+                        'y': y_center,
+                        'button': 'left',
+                        'clickCount': 1
+                    }), _is_update=True),
+                    
+                    process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+                        'type': 'mouseReleased',
+                        'x': x_center,
+                        'y': y_center,
+                        'button': 'left',
+                        'clickCount': 1
+                    }), _is_update=True)
+                )
+            
+            return True, coordinates
         else:
-            raise Exception(f"Failed to get box model for element with selector '{selector}'.")
+            return False, None
+
+    @staticmethod
+    async def find_element(tab:Tab, selector):
+        """
+        查找元素
+        :param tab: Tab对象
+        :param selector: CSS选择器
+        :return: (found: bool, coordinates: tuple/None)
+        """
+        return await ChromeHelper.find_and_click_element(tab, selector, click_enabled=False)
 
     def get_status(self):
         if self._executable_path and not os.path.exists(self._executable_path):

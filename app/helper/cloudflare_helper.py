@@ -34,6 +34,7 @@ CHALLENGE_SELECTORS = [
     # Cloudflare
     '#cf-challenge-running', '.ray_id', '.attack-box', '#cf-please-wait', '#challenge-spinner', 
     '#trk_jschal_js', '#turnstile-wrapper', '.lds-ring', 'div.g-recaptcha', 'div.h-captcha',
+    '.cf-turnstile',
     # Custom CloudFlare for EbookParadijs, Film-Paleis, MuziekFabriek and Puur-Hollands
     'td.info #js_info',
     # Fairlane / pararius.com
@@ -43,8 +44,8 @@ CHALLENGE_SELECTORS = [
     # Slider verification
     '#dragContainer', '#dragHandler', '.dragHandlerBg'
 ]
-SHORT_TIMEOUT = 20
-CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "60"))
+SHORT_TIMEOUT = 10
+CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "120"))
 
 
 async def resolve_challenge(tab: Tab, timeout=CF_TIMEOUT):
@@ -152,7 +153,10 @@ async def _evil_logic(tab: Tab):
         while not (await _wait_until_condition(tab, CHALLENGE_TITLES, lambda d, t: d.target.title.lower() != t.lower(), async_type=False, message="title changes") and
                    await _wait_until_condition(tab, CHALLENGE_SELECTORS, async_match_selectors_not, async_type=True, message="selectors disappear")):
             log.debug("Timeout waiting for selector")
-            await click_verify(tab)
+            verification_result = await click_verify(tab)
+            if verification_result:
+                log.info("Human verification completed successfully!")
+                break
 
         # waits until Cloudflare redirection ends
         log.debug("Waiting for redirect")
@@ -236,15 +240,78 @@ async def drag_slider_verify(tab: Tab):
     return False
 
 
+async def check_verification_success(tab: Tab, success_selectors=None, timeout=10):
+    """
+    检查人机验证是否成功完成
+    :param tab: Tab对象
+    :param success_selectors: 要检查的成功标志选择器列表，为None时使用默认值
+    :param timeout: 等待超时时间
+    :return: True表示验证成功，False表示验证失败或超时
+    """
+    from app.helper import ChromeHelper
+    
+    if success_selectors is None:
+        success_selectors = [
+            'div[role="alert"] #success-text',
+            'span[id="success-text"]',
+        ]
+    
+    challenge_selectors = [
+        'div[class*="main-wrapper"] input[type=checkbox]',  # Cloudflare主要验证框
+        '.cf-turnstile',                                     # Turnstile验证
+        '#turnstile-wrapper',                                # Turnstile包装器
+    ]
+    
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            success_found = False
+            for selector in success_selectors:
+                found, coordinates = await ChromeHelper.find_element(tab, selector)
+                if found:
+                    log.debug(f"Found success element: {selector} at {coordinates}")
+                    success_found = True
+                    break
+            
+            challenge_gone = True
+            for selector in challenge_selectors:
+                found, _ = await ChromeHelper.find_element(tab, selector)
+                if found:
+                    log.debug(f"Challenge element still present: {selector}")
+                    challenge_gone = False
+                    break
+            
+            if success_found:
+                log.debug("Verification success: success element found")
+                return True
+            if challenge_gone:
+                log.debug("Challenge elements gone")
+                return True
+            
+            await asyncio.sleep(0.5)
+            
+        except Exception as e:
+            log.debug(f"Error checking verification success: {str(e)}")
+            await asyncio.sleep(0.5)
+    
+    log.debug("Verification success check timeout")
+    return False
+
 async def click_verify(tab: Tab):
     from app.helper import ChromeHelper
 
     # Try Cloudflare checkbox verification
     try:
         log.debug("Try to find the Cloudflare verify checkbox")
-        selector = "input[type=checkbox]"
-        await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
-        log.debug("Cloudflare verify checkbox found and clicked")
+        selector = "div[class*='main-wrapper'] input[type=checkbox]"
+        status, coordinates = await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
+        if status:
+            log.debug(f"Cloudflare verify checkbox found and clicked at {coordinates}")
+            if await check_verification_success(tab, success_selectors=None):
+                return True
+        else:
+            log.debug("Cloudflare verify checkbox not found")
     except Exception as e:
         log.debug(f"Cloudflare verify checkbox not found: {str(e)}")
 
@@ -252,8 +319,11 @@ async def click_verify(tab: Tab):
     try:
         log.debug("Try to find the chaitin verify checkbox")
         selector = "button[@id='sl-check']"
-        await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
-        log.debug("chaitin verify checkbox found and clicked")
+        status, coordinates = await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
+        if status:
+            log.debug(f"chaitin verify checkbox found and clicked at {coordinates}")
+        else:
+            log.debug("chaitin verify checkbox not found")
     except Exception as e:
         log.debug(f"chaitin verify checkbox not found: {str(e)}")
         
@@ -261,7 +331,6 @@ async def click_verify(tab: Tab):
     try:
         if await drag_slider_verify(tab):
             log.debug("Slider verification completed successfully")
-            return
     except Exception as e:
         log.debug(f"Slider verification error: {str(e)}")
     
@@ -269,3 +338,5 @@ async def click_verify(tab: Tab):
         await asyncio.wait_for(check_document_ready(tab), 20)
     except asyncio.TimeoutError:
         log.debug("Timeout waiting for the page")
+    
+    return False
