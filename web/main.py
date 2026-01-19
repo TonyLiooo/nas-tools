@@ -1,11 +1,20 @@
 import base64
 import datetime
 import hashlib
+import json
 import ipaddress
 import mimetypes
+import os
 import os.path
+import platform
+import uuid
 import re
+import select
+import signal
+import subprocess
 import time
+import threading
+import asyncio
 import traceback
 import urllib
 import xml.dom.minidom
@@ -53,6 +62,27 @@ from web.backend.wallpaper import get_login_wallpaper
 from web.backend.web_utils import WebUtils
 from web.security import require_auth
 
+# PTY support imports
+try:
+    import pty  # POSIX only
+    import fcntl
+    import termios
+    import struct
+except Exception:
+    pty = None
+    fcntl = None
+    termios = None
+    struct = None
+
+# Windows pywinpty
+WINPTY_AVAILABLE = False
+try:
+    if platform.system().lower().startswith('win'):
+        from winpty import PtyProcess as WinPtyProcess  # type: ignore
+        WINPTY_AVAILABLE = True
+except Exception:
+    WINPTY_AVAILABLE = False
+
 flask_dir = Path(__file__).resolve().parent.parent
 flask_env_path = flask_dir / ".flaskenv"
 if flask_env_path.is_file():
@@ -63,6 +93,178 @@ else:
 
 # 配置文件锁
 ConfigLock = Lock()
+
+# 终端会话（HTTP Fallback）管理
+TerminalSessions = {}
+TerminalSessionsLock = Lock()
+
+class TerminalSession:
+    def __init__(self, is_windows: bool, cols: int = 80, rows: int = 24):
+        self.is_windows = is_windows
+        self.cols = cols
+        self.rows = rows
+        self.buf_lock = Lock()
+        self.buffer = []  # list of str chunks
+        self._cond = threading.Condition(self.buf_lock)
+        self.alive = True
+        self.proc = None
+        self.master = None
+        self._spawn()
+
+    def _append(self, s: str):
+        with self._cond:
+            self.buffer.append(s)
+            try:
+                self._cond.notify_all()
+            except Exception:
+                pass
+
+    def read_and_clear(self) -> str:
+        with self.buf_lock:
+            if not self.buffer:
+                return ''
+            data = ''.join(self.buffer)
+            self.buffer = []
+            return data
+
+    def read_wait(self, wait_s: int) -> str:
+        # 长轮询：等待直到有数据或超时或会话结束
+        end_t = time.time() + max(0, int(wait_s or 0))
+        with self._cond:
+            while self.alive and not self.buffer:
+                remaining = end_t - time.time()
+                if remaining <= 0:
+                    break
+                try:
+                    self._cond.wait(timeout=remaining)
+                except Exception:
+                    break
+            # 不管是否因超时/数据/结束而退出，返回一次缓冲并清空
+            if not self.buffer:
+                return ''
+            data = ''.join(self.buffer)
+            self.buffer = []
+            return data
+
+    def _spawn(self):
+        if self.is_windows:
+            if not WINPTY_AVAILABLE:
+                raise RuntimeError('pywinpty not installed')
+            shell = 'powershell.exe'
+            try:
+                proc = WinPtyProcess.spawn(shell)
+            except Exception:
+                proc = WinPtyProcess.spawn('cmd.exe')
+            try:
+                if hasattr(proc, 'setwinsize'):
+                    proc.setwinsize(self.rows, self.cols)
+            except Exception:
+                pass
+            self.proc = proc
+
+            def reader():
+                while self.alive:
+                    try:
+                        data = proc.read(4096)
+                        if data:
+                            self._append(data)
+                        else:
+                            time.sleep(0.05)
+                    except Exception:
+                        break
+                self.alive = False
+
+            threading.Thread(target=reader, daemon=True).start()
+        else:
+            master, slave = pty.openpty()
+            try:
+                shell = os.environ.get('SHELL') or '/bin/bash'
+                if not os.path.exists(shell):
+                    shell = '/bin/sh'
+                proc = subprocess.Popen([shell, '-l'], preexec_fn=os.setsid,
+                                        stdin=slave, stdout=slave, stderr=slave)
+            finally:
+                try:
+                    os.close(slave)
+                except Exception:
+                    pass
+            self.proc = proc
+            self.master = master
+
+            def reader():
+                while self.alive:
+                    try:
+                        if proc.poll() is not None:
+                            break
+                        r, _, _ = select.select([master], [], [], 0.2)
+                        if master in r:
+                            try:
+                                buf = os.read(master, 4096)
+                            except Exception:
+                                break
+                            if not buf:
+                                break
+                            try:
+                                self._append(buf.decode('utf-8', errors='ignore'))
+                            except Exception:
+                                pass
+                    except Exception:
+                        time.sleep(0.05)
+                        continue
+                self.alive = False
+
+            threading.Thread(target=reader, daemon=True).start()
+
+    def write(self, data: str):
+        try:
+            if self.is_windows:
+                if self.proc:
+                    self.proc.write(data)
+            else:
+                if self.master is not None:
+                    os.write(self.master, data.encode('utf-8', errors='ignore'))
+        except Exception:
+            pass
+
+    def resize(self, cols: int, rows: int):
+        self.cols = cols
+        self.rows = rows
+        try:
+            if self.is_windows and self.proc and hasattr(self.proc, 'setwinsize'):
+                self.proc.setwinsize(rows, cols)
+            elif self.master is not None and fcntl and termios and struct:
+                fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+        except Exception:
+            pass
+
+    def stop(self):
+        self.alive = False
+        try:
+            if self.is_windows:
+                if self.proc:
+                    try:
+                        self.proc.close(force=True)
+                    except Exception:
+                        pass
+            else:
+                if self.proc:
+                    try:
+                        os.killpg(self.proc.pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+                if self.master is not None:
+                    try:
+                        os.close(self.master)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        # 唤醒等待的轮询
+        try:
+            with self._cond:
+                self._cond.notify_all()
+        except Exception:
+            pass
 
 # Flask App
 App = Flask(__name__)
@@ -675,9 +877,23 @@ def statistics():
     SiteDownloads = []
     SiteRatios = []
     SiteErrs = {}
-    # 站点上传下载
-    SiteData = SiteUserInfo().get_site_data(specify_sites=refresh_site, force=refresh_force)
-    if isinstance(SiteData, dict):
+    # 非阻塞：根据请求触发后台刷新，页面使用缓存渲染
+    if refresh_force or refresh_site:
+        SiteUserInfo().trigger_refresh(specify_sites=refresh_site, force=refresh_force)
+    RefreshTriggered = True if (refresh_force or refresh_site) else False
+    sui = SiteUserInfo()
+    IsUpdating = sui.is_updating
+    LastUpdateTime = None
+    if sui._last_update_time:
+        try:
+            LastUpdateTime = sui._last_update_time.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            LastUpdateTime = str(sui._last_update_time)
+    # 站点上传下载（缓存优先）
+    SiteData = SiteUserInfo().get_cached_site_data()
+    used_cache = False
+    if isinstance(SiteData, dict) and len(SiteData) > 0:
+        used_cache = True
         for name, data in SiteData.items():
             if not data:
                 continue
@@ -704,6 +920,33 @@ def statistics():
                 SiteDownloads.append(int(dl))
                 SiteRatios.append(round(float(ratio), 1))
 
+    # 回退：缓存为空时，从DB统计构建汇总，保证页面可用
+    if not used_cache:
+        try:
+            _res = WebAction().get_site_user_statistics({"encoding": "DICT"})
+            if isinstance(_res, dict) and _res.get("code") == 0:
+                for item in _res.get("data") or []:
+                    name = item.get("site")
+                    up = item.get("upload") or 0
+                    dl = item.get("download") or 0
+                    ratio = item.get("ratio") or 0
+                    seeding = item.get("seeding") or 0
+                    seeding_size = item.get("seeding_size") or 0
+                    if name and name not in SiteNames:
+                        SiteNames.append(name)
+                        TotalUpload += int(up)
+                        TotalDownload += int(dl)
+                        TotalSeeding += int(seeding)
+                        TotalSeedingSize += int(seeding_size)
+                        SiteUploads.append(int(up))
+                        SiteDownloads.append(int(dl))
+                        try:
+                            SiteRatios.append(round(float(ratio), 1))
+                        except Exception:
+                            SiteRatios.append(0)
+        except Exception:
+            pass
+
     # 近期上传下载各站点汇总
     # CurrentUpload, CurrentDownload, _, _, _ = SiteUserInfo().get_pt_site_statistics_history(
     #    days=2)
@@ -721,7 +964,61 @@ def statistics():
                            SiteRatios=SiteRatios,
                            SiteNames=SiteNames,
                            SiteErr=SiteErrs,
-                           SiteUserStatistics=SiteUserStatistics)
+                           SiteUserStatistics=SiteUserStatistics,
+                           RefreshTriggered=RefreshTriggered,
+                           IsUpdating=IsUpdating,
+                           LastUpdateTime=LastUpdateTime)
+
+
+@App.route('/statistics/status', methods=['GET'])
+@login_required
+def statistics_status():
+    sui = SiteUserInfo()
+    last_update_time = None
+    if sui._last_update_time:
+        try:
+            last_update_time = sui._last_update_time.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            last_update_time = str(sui._last_update_time)
+    ret = {"code": 0, "is_updating": bool(sui.is_updating), "last_update_time": last_update_time}
+    resp = make_response(json.dumps(ret))
+    resp.headers["Content-Type"] = "application/json"
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
+@App.route('/stream-statistics')
+@login_required
+def stream_statistics():
+    def _statistics_stream():
+        while True:
+            try:
+                sui = SiteUserInfo()
+                is_updating = bool(sui.is_updating)
+                last_update_time = None
+                if sui._last_update_time:
+                    try:
+                        last_update_time = sui._last_update_time.strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        last_update_time = str(sui._last_update_time)
+                payload = {"code": 0, "is_updating": is_updating, "last_update_time": last_update_time}
+                time.sleep(1)
+                yield 'data: %s\n\n' % json.dumps(payload)
+            except Exception:
+                time.sleep(1)
+                yield 'data: {"code":0}\n\n'
+
+    resp = Response(_statistics_stream(), mimetype='text/event-stream')
+    try:
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        resp.headers["X-Accel-Buffering"] = "no"
+    except Exception:
+        pass
+    return resp
 
 
 # 刷流任务页面
@@ -808,7 +1105,7 @@ def service():
 
     # 系统进程
     if "processes" in Services:
-        if not SystemUtils.is_docker() or not SystemUtils.get_all_processes():
+        if not SystemUtils.get_all_processes():
             Services.pop('processes')
 
     return render_template("service.html",
@@ -1035,11 +1332,24 @@ def notification():
     MessageClients = Message().get_message_client_info()
     Channels = ModuleConf.MESSAGE_CONF.get("client")
     Switchs = ModuleConf.MESSAGE_CONF.get("switch")
+    # 是否存在企业微信客户端
+    HasWeCom = False
+    try:
+        for _, c in (MessageClients or {}).items():
+            if c.get("type") == "wechat":
+                HasWeCom = True
+                break
+    except Exception:
+        HasWeCom = False
+    # 命令列表（含插件）
+    Commands = WebAction().get_commands()
     return render_template("setting/notification.html",
                            Channels=Channels,
                            Switchs=Switchs,
                            ClientCount=len(MessageClients),
-                           MessageClients=MessageClients)
+                           MessageClients=MessageClients,
+                           HasWeCom=HasWeCom,
+                           Commands=Commands)
 
 
 # 用户管理页面
@@ -1315,7 +1625,7 @@ def wechat():
             root_node = dom_tree.documentElement
             # 消息类型
             msg_type = DomUtils.tag_value(root_node, "MsgType")
-            # Event event事件只有click才有效,enter_agent无效
+            # Event 事件只有 click 才有效，enter_agent 无效
             event = DomUtils.tag_value(root_node, "Event")
             # 用户ID
             user_id = DomUtils.tag_value(root_node, "FromUserName")
@@ -1325,7 +1635,7 @@ def wechat():
                 return make_response("ok", 200)
             # 解析消息内容
             content = ""
-            if msg_type == "event" and event == "click":
+            if (msg_type or "").lower() == "event" and (event or "").lower() == "click":
                 # 校验用户有权限执行交互命令
                 if conf.get("adminUser") and not any(
                         user_id == admin_user for admin_user in str(conf.get("adminUser")).split(";")):
@@ -1337,7 +1647,11 @@ def wechat():
                     log.info("点击菜单：%s" % event_key)
                     keys = event_key.split('#')
                     if len(keys) > 2:
-                        content = ModuleConf.WECHAT_MENU.get(keys[2])
+                        try:
+                            keymap = SystemConfig().get(SystemConfigKey.WeComMenuKeyMap) or {}
+                        except Exception:
+                            keymap = {}
+                        content = (keymap.get(keys[2]) or ModuleConf.WECHAT_MENU.get(keys[2]))
             elif msg_type == "text":
                 # 文本消息
                 content = DomUtils.tag_value(root_node, "Content", default="")
@@ -1816,7 +2130,16 @@ def Img():
     """
     url = request.args.get('url')
     if not url:
-        return make_response("参数错误", 400)
+        # 当未提供 url 参数或为空时，直接返回透明占位图，避免 400
+        try:
+            transparent_png = base64.b64decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAOaZLxsAAAAASUVORK5CYII='
+            )
+            response = Response(transparent_png, mimetype='image/png')
+            response.headers.set('Cache-Control', 'max-age=86400')
+            return response
+        except Exception:
+            return make_response("参数错误", 400)
     # 计算Etag
     etag = hashlib.sha256(url.encode('utf-8')).hexdigest()
     # 检查协商缓存
@@ -1826,16 +2149,35 @@ def Img():
     
     # 获取图片数据
     try:
-      img = WebUtils.request_cache(url)
+      # 尝试获取媒体服务器的认证信息（Cookies或Headers）
+      cookies = None
+      try:
+          server = MediaServer()
+          if server and server.server:
+              # 优先尝试 get_image_headers（用于飞牛影视等需要Header认证的服务器）
+              if hasattr(server.server, 'get_image_headers'):
+                  cookies = server.server.get_image_headers(url)
+              # 回退到 get_image_cookies
+              if not cookies and hasattr(server.server, 'get_image_cookies'):
+                  cookies = server.server.get_image_cookies(url)
+      except Exception:
+          pass
+      
+      img = WebUtils.request_cache(url, cookies=cookies)
+      guess_type, _ = mimetypes.guess_type(url)
       response = Response(
           img,
-          mimetype='image/jpeg'
+          mimetype=guess_type or 'image/jpeg'
       )
       response.headers.set('Cache-Control', 'max-age=604800')
       response.headers.set('Etag', etag)
       return response
     except:
-      return make_response("图片加载失败", 400)
+      # 回退：直接重定向到原始URL，避免前端出现400
+      try:
+          return redirect(url, code=302)
+      except Exception:
+          return make_response("图片加载失败", 400)
 
 @App.route('/stream-logging')
 @login_required
@@ -1940,6 +2282,577 @@ def message_handler(ws):
                 "lst_time": lst_time,
                 "message": ret_messages
             })))
+
+
+@Sock.route('/ws-statistics')
+@login_required
+def statistics_ws(ws):
+    """
+    统计页刷新状态推送 WebSocket
+    周期性推送 {code,is_updating,last_update_time}
+    """
+    while True:
+        try:
+            # 定期推送状态
+            sui = SiteUserInfo()
+            is_updating = bool(sui.is_updating)
+            last_update_time = None
+            if sui._last_update_time:
+                try:
+                    last_update_time = sui._last_update_time.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    last_update_time = str(sui._last_update_time)
+            ws.send(json.dumps({
+                "code": 0,
+                "is_updating": is_updating,
+                "last_update_time": last_update_time
+            }))
+            time.sleep(1)
+        except ConnectionClosed:
+            break
+        except Exception:
+            # 异常情况下轻微退避，保持连接尝试
+            time.sleep(1)
+
+
+@Sock.route('/ws-test-site')
+@login_required
+def test_site_ws(ws):
+    """
+    站点连通性测试 WebSocket：
+    客户端通过查询参数 id 指定站点ID，服务端执行测试并返回一次性结果：{code,msg,time}
+    """
+    try:
+        site_id = request.args.get("id")
+        if not site_id:
+            ws.send(json.dumps({"code": -1, "msg": "参数错误", "time": 0}))
+            return
+        result = {"done": False, "ret": None}
+
+        def runner():
+            try:
+                flag, msg, times, _ = asyncio.run(Sites().test_connection(site_id))
+                code = 0 if flag else -1
+                result["ret"] = {"code": code, "msg": msg, "time": times}
+            except Exception as e:
+                result["ret"] = {"code": -1, "msg": str(e), "time": 0}
+            finally:
+                result["done"] = True
+
+        th = threading.Thread(target=runner, daemon=True)
+        th.start()
+
+        # 初始心跳，告知运行中
+        try:
+            ws.send(json.dumps({"code": 1, "msg": "running"}))
+        except Exception:
+            return
+
+        while True:
+            try:
+                if result["done"]:
+                    ws.send(json.dumps(result["ret"] or {"code": -1, "msg": "无结果", "time": 0}))
+                    break
+                time.sleep(1)
+                # 周期心跳，保持连接活跃
+                ws.send(json.dumps({"code": 1}))
+            except ConnectionClosed:
+                return
+            except Exception:
+                time.sleep(1)
+                continue
+    except ConnectionClosed:
+        pass
+    except Exception as e:
+        try:
+            ws.send(json.dumps({"code": -1, "msg": str(e), "time": 0}))
+        except Exception:
+            pass
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+@App.route('/api/site/test/stream', methods=['GET'])
+@login_required
+def api_site_test_stream():
+    try:
+        site_id = request.args.get('id')
+        if not site_id:
+            def _bad():
+                yield 'data: %s\n\n' % json.dumps({"code": -1, "msg": "missing id", "time": 0})
+            resp = Response(_bad(), mimetype='text/event-stream')
+            try:
+                resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                resp.headers["Pragma"] = "no-cache"
+                resp.headers["Expires"] = "0"
+                resp.headers["X-Accel-Buffering"] = "no"
+            except Exception:
+                pass
+            return resp
+
+        result = {"done": False, "ret": None}
+
+        def runner():
+            try:
+                flag, msg, times, _ = asyncio.run(Sites().test_connection(site_id))
+                code = 0 if flag else -1
+                result["ret"] = {"code": code, "msg": msg, "time": times}
+            except Exception as e:
+                result["ret"] = {"code": -1, "msg": str(e), "time": 0}
+            finally:
+                result["done"] = True
+
+        th = threading.Thread(target=runner, daemon=True)
+        th.start()
+
+        def _stream():
+            try:
+                yield 'data: %s\n\n' % json.dumps({"code": 1, "msg": "running"})
+            except Exception:
+                pass
+            while True:
+                try:
+                    if result["done"]:
+                        yield 'data: %s\n\n' % json.dumps(result["ret"] or {"code": -1, "msg": "无结果", "time": 0})
+                        break
+                    time.sleep(1)
+                    yield 'data: %s\n\n' % json.dumps({"code": 1})
+                except GeneratorExit:
+                    break
+                except Exception:
+                    time.sleep(1)
+                    continue
+
+        resp = Response(_stream(), mimetype='text/event-stream')
+        try:
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+            resp.headers["X-Accel-Buffering"] = "no"
+        except Exception:
+            pass
+        return resp
+    except Exception as e:
+        return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+
+
+@App.route('/api/terminal/start', methods=['POST'])
+@login_required
+def api_terminal_start():
+    try:
+        if not getattr(current_user, 'admin', 0):
+            return Response(json.dumps({"code": -1, "msg": "forbidden"}), mimetype='application/json')
+        body = request.get_json(silent=True) or {}
+        cols = int(body.get('cols') or 80)
+        rows = int(body.get('rows') or 24)
+        is_windows = platform.system().lower().startswith('win')
+        try:
+            sess = TerminalSession(is_windows=is_windows, cols=cols, rows=rows)
+        except Exception as e:
+            return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+        sid = uuid.uuid4().hex
+        with TerminalSessionsLock:
+            TerminalSessions[sid] = sess
+        return Response(json.dumps({"code": 0, "id": sid}), mimetype='application/json')
+    except Exception as e:
+        return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+
+
+@App.route('/api/terminal/input', methods=['POST'])
+@login_required
+def api_terminal_input():
+    try:
+        if not getattr(current_user, 'admin', 0):
+            return Response(json.dumps({"code": -1, "msg": "forbidden"}), mimetype='application/json')
+        body = request.get_json(silent=True) or {}
+        sid = body.get('id')
+        data = body.get('data') or ''
+        if not sid:
+            return Response(json.dumps({"code": -1, "msg": "invalid id"}), mimetype='application/json')
+        with TerminalSessionsLock:
+            sess = TerminalSessions.get(sid)
+        if not sess:
+            return Response(json.dumps({"code": -1, "msg": "not found"}), mimetype='application/json')
+        sess.write(data)
+        return Response(json.dumps({"code": 0}), mimetype='application/json')
+    except Exception as e:
+        return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+
+
+@App.route('/api/terminal/resize', methods=['POST'])
+@login_required
+def api_terminal_resize():
+    try:
+        if not getattr(current_user, 'admin', 0):
+            return Response(json.dumps({"code": -1, "msg": "forbidden"}), mimetype='application/json')
+        body = request.get_json(silent=True) or {}
+        sid = body.get('id')
+        cols = int(body.get('cols') or 80)
+        rows = int(body.get('rows') or 24)
+        with TerminalSessionsLock:
+            sess = TerminalSessions.get(sid)
+        if not sess:
+            return Response(json.dumps({"code": -1, "msg": "not found"}), mimetype='application/json')
+        sess.resize(cols, rows)
+        return Response(json.dumps({"code": 0}), mimetype='application/json')
+    except Exception as e:
+        return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+
+
+@App.route('/api/terminal/stop', methods=['POST'])
+@login_required
+def api_terminal_stop():
+    try:
+        if not getattr(current_user, 'admin', 0):
+            return Response(json.dumps({"code": -1, "msg": "forbidden"}), mimetype='application/json')
+        body = request.get_json(silent=True) or {}
+        sid = body.get('id')
+        with TerminalSessionsLock:
+            sess = TerminalSessions.pop(sid, None)
+        if sess:
+            sess.stop()
+        return Response(json.dumps({"code": 0}), mimetype='application/json')
+    except Exception as e:
+        return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+
+
+@App.route('/api/terminal/poll', methods=['POST'])
+@login_required
+def api_terminal_poll():
+    try:
+        if not getattr(current_user, 'admin', 0):
+            return Response(json.dumps({"code": -1, "msg": "forbidden"}), mimetype='application/json')
+        body = request.get_json(silent=True) or {}
+        sid = body.get('id')
+        wait_s = int(body.get('wait') or 20)
+        with TerminalSessionsLock:
+            sess = TerminalSessions.get(sid)
+        if not sess:
+            return Response(json.dumps({"code": 0, "data": "", "alive": False}), mimetype='application/json')
+        data = sess.read_wait(wait_s)
+        alive = bool(sess.alive)
+        return Response(json.dumps({"code": 0, "data": data, "alive": alive}), mimetype='application/json')
+    except Exception as e:
+        return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+
+
+@App.route('/api/terminal/stream', methods=['GET'])
+@login_required
+def api_terminal_stream():
+    try:
+        if not getattr(current_user, 'admin', 0):
+            # 与 SSE 兼容：返回一个短流提示后结束
+            def _deny_stream():
+                yield 'data: %s\n\n' % json.dumps({"code": -1, "msg": "forbidden"})
+            resp = Response(_deny_stream(), mimetype='text/event-stream')
+            try:
+                resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                resp.headers["Pragma"] = "no-cache"
+                resp.headers["Expires"] = "0"
+                resp.headers["X-Accel-Buffering"] = "no"
+            except Exception:
+                pass
+            return resp
+
+        sid = request.args.get('id')
+        if not sid:
+            def _bad_stream():
+                yield 'data: %s\n\n' % json.dumps({"code": -1, "msg": "missing id"})
+            resp = Response(_bad_stream(), mimetype='text/event-stream')
+            try:
+                resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                resp.headers["Pragma"] = "no-cache"
+                resp.headers["Expires"] = "0"
+                resp.headers["X-Accel-Buffering"] = "no"
+            except Exception:
+                pass
+            return resp
+
+        with TerminalSessionsLock:
+            sess = TerminalSessions.get(sid)
+
+        def _stream():
+            # 首帧：通知存活状态
+            try:
+                yield 'data: %s\n\n' % json.dumps({"code": 0, "data": "", "alive": bool(sess and sess.alive)})
+            except Exception:
+                pass
+            while True:
+                try:
+                    with TerminalSessionsLock:
+                        local = TerminalSessions.get(sid)
+                    if not local:
+                        yield 'data: %s\n\n' % json.dumps({"code": 0, "data": "", "alive": False})
+                        break
+                    # 阻塞等待输出或超时
+                    data = local.read_wait(25)
+                    alive = bool(local.alive)
+                    payload = {"code": 0, "data": data or "", "alive": alive}
+                    yield 'data: %s\n\n' % json.dumps(payload)
+                    if not alive:
+                        break
+                except GeneratorExit:
+                    break
+                except Exception:
+                    # 轻微错误时保持心跳
+                    try:
+                        yield 'data: %s\n\n' % json.dumps({"code": 0, "data": "", "alive": True})
+                    except Exception:
+                        break
+
+        resp = Response(_stream(), mimetype='text/event-stream')
+        try:
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+            resp.headers["X-Accel-Buffering"] = "no"
+        except Exception:
+            pass
+        return resp
+    except Exception as e:
+        return Response(json.dumps({"code": -1, "msg": str(e)}), mimetype='application/json')
+
+
+@Sock.route('/ws-terminal')
+@login_required
+def terminal_ws(ws):
+    try:
+        if not getattr(current_user, 'admin', 0):
+            try:
+                ws.send(json.dumps({"code": -1, "msg": "forbidden"}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+            return
+
+        sysname = platform.system().lower()
+        is_windows = sysname.startswith('win')
+        proch = {"proc": None}
+
+        def send_text(data):
+            try:
+                if isinstance(data, (bytes, bytearray)):
+                    try:
+                        data = data.decode('utf-8', errors='ignore')
+                    except Exception:
+                        try:
+                            data = data.decode('latin-1', errors='ignore')
+                        except Exception:
+                            data = str(data)
+                ws.send(data)
+            except Exception:
+                pass
+
+        def posix_spawn():
+            shell = os.environ.get('SHELL') or '/bin/bash'
+            if not os.path.exists(shell):
+                shell = '/bin/sh'
+            master, slave = pty.openpty()
+            try:
+                proc = subprocess.Popen([shell, '-l'], preexec_fn=os.setsid,
+                                        stdin=slave, stdout=slave, stderr=slave)
+            finally:
+                try:
+                    os.close(slave)
+                except Exception:
+                    pass
+
+            proch["proc"] = (proc, master)
+
+            def reader():
+                while True:
+                    try:
+                        if proc.poll() is not None:
+                            break
+                        r, _, _ = select.select([master], [], [], 0.2)
+                        if master in r:
+                            try:
+                                buf = os.read(master, 4096)
+                            except Exception:
+                                break
+                            if not buf:
+                                break
+                            try:
+                                send_text(buf.decode('utf-8', errors='ignore'))
+                            except Exception:
+                                pass
+                    except ConnectionClosed:
+                        break
+                    except Exception:
+                        time.sleep(0.05)
+                        continue
+
+            t = threading.Thread(target=reader, daemon=True)
+            t.start()
+
+        def posix_write(data: str):
+            proc, master = proch.get("proc")
+            try:
+                os.write(master, data.encode('utf-8', errors='ignore'))
+            except Exception:
+                pass
+
+        def posix_resize(cols: int, rows: int):
+            try:
+                _, master = proch.get("proc")
+                if fcntl and termios and struct:
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+            except Exception:
+                pass
+
+        def posix_cleanup():
+            try:
+                proc, master = proch.get("proc") or (None, None)
+                if proc is not None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+                if master is not None:
+                    try:
+                        os.close(master)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        def win_spawn():
+            if not WINPTY_AVAILABLE:
+                ws.send(json.dumps({"code": -1, "msg": "pywinpty not installed"}))
+                return False
+            shell = 'powershell.exe'
+            try:
+                proc = WinPtyProcess.spawn(shell)
+            except Exception:
+                proc = WinPtyProcess.spawn('cmd.exe')
+            proch["proc"] = proc
+
+            def reader():
+                while True:
+                    try:
+                        data = proc.read(4096)
+                        if not data:
+                            time.sleep(0.05)
+                            continue
+                        send_text(data)
+                    except ConnectionClosed:
+                        break
+                    except Exception:
+                        time.sleep(0.05)
+                        try:
+                            if not proc.isalive():
+                                break
+                        except Exception:
+                            break
+
+            t = threading.Thread(target=reader, daemon=True)
+            t.start()
+            return True
+
+        def win_write(data: str):
+            try:
+                proc = proch.get("proc")
+                if proc:
+                    proc.write(data)
+            except Exception:
+                pass
+
+        def win_resize(cols: int, rows: int):
+            try:
+                proc = proch.get("proc")
+                if proc and hasattr(proc, 'setwinsize'):
+                    proc.setwinsize(rows, cols)
+            except Exception:
+                pass
+
+        def win_cleanup():
+            try:
+                proc = proch.get("proc")
+                if proc:
+                    try:
+                        proc.close(force=True)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        if is_windows:
+            ok = win_spawn()
+            if not ok:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+                return
+        else:
+            if pty is None:
+                try:
+                    ws.send(json.dumps({"code": -1, "msg": "no pty"}))
+                except Exception:
+                    pass
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+                return
+            posix_spawn()
+
+        while True:
+            try:
+                msg = ws.receive(timeout=25)
+            except ConnectionClosed:
+                break
+            except Exception:
+                msg = None
+            if not msg:
+                # keepalive
+                # also detect child exit (POSIX)
+                try:
+                    if not is_windows:
+                        proc, _ = proch.get("proc")
+                        if proc and proc.poll() is not None:
+                            break
+                except Exception:
+                    pass
+                continue
+            try:
+                body = json.loads(msg)
+                typ = body.get('type')
+                if typ == 'input':
+                    data = body.get('data') or ''
+                    if is_windows:
+                        win_write(data)
+                    else:
+                        posix_write(data)
+                elif typ == 'resize':
+                    cols = int(body.get('cols') or 80)
+                    rows = int(body.get('rows') or 24)
+                    if is_windows:
+                        win_resize(cols, rows)
+                    else:
+                        posix_resize(cols, rows)
+                elif typ == 'exit':
+                    break
+            except Exception:
+                continue
+    finally:
+        try:
+            if platform.system().lower().startswith('win'):
+                win_cleanup()
+            else:
+                posix_cleanup()
+        except Exception:
+            pass
+        try:
+            ws.close()
+        except Exception:
+            pass
 
 
 # base64模板过滤器

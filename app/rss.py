@@ -165,17 +165,33 @@ class Rss:
                             log.info(f"【Rss】{title} 已成功订阅过")
                             continue
                         # 识别种子名称，开始搜索TMDB
-                        media_info = MetaInfo(title=title)
+                        description = article.get('description', '')
+                        media_info = MetaInfo(title=title, subtitle=description)
+                        parsed_season = media_info.begin_season
+                        parsed_episode = media_info.begin_episode
+                        parsed_end_episode = media_info.end_episode
+                        parsed_total_episodes = media_info.total_episodes
                         cache_info = self.media.get_cache_info(media_info)
                         if cache_info.get("id"):
-                            # 使用缓存信息
                             media_info.tmdb_id = cache_info.get("id")
-                            media_info.type = cache_info.get("type")
+                            cached_type = cache_info.get("type")
                             media_info.title = cache_info.get("title")
                             media_info.year = cache_info.get("year")
+                            if parsed_season is not None or parsed_episode is not None:
+                                media_info.type = MediaType.TV
+                                if parsed_season is not None:
+                                    media_info.begin_season = parsed_season
+                                if parsed_episode is not None:
+                                    media_info.begin_episode = parsed_episode
+                                if parsed_end_episode is not None:
+                                    media_info.end_episode = parsed_end_episode
+                                if parsed_total_episodes is not None:
+                                    media_info.total_episodes = parsed_total_episodes
+                            else:
+                                media_info.type = cached_type
                         else:
                             # 重新查询TMDB
-                            media_info = self.media.get_media_info(title=title)
+                            media_info = self.media.get_media_info(title=title, subtitle=description)
                             if not media_info:
                                 log.warn(f"【Rss】{title} 无法识别出媒体信息！")
                                 continue

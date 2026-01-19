@@ -14,6 +14,7 @@ RUN apk add --no-cache --virtual .build-deps \
     && chmod +x /usr/bin/mc \
     && pip install --upgrade pip setuptools wheel cython \
     && pip install -r https://raw.githubusercontent.com/TonyLiooo/nas-tools/master/requirements.txt \
+    && pip install feapder==1.9.2 --no-deps \
     && apk del --purge .build-deps \
     && rm -rf /var/cache/apk/* /tmp/* /root/.cache/*
 

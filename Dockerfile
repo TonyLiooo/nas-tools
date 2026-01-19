@@ -16,6 +16,7 @@ RUN apk add --no-cache --virtual .build-deps \
     && pip install --upgrade pip setuptools wheel \
     && pip install cython \
     && pip install -r ./requirements.txt \
+    && pip install feapder==1.9.2 --no-deps \
     && apk del --purge .build-deps \
     && rm -rf /tmp/* /root/.cache /var/cache/apk/*
 ENV PYTHONPATH=/usr/lib/python3.12/site-packages \

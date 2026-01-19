@@ -51,7 +51,6 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
         if tmdbid:
             media_info = WebUtils.get_mediainfo_from_id(mtype=mtype, mediaid=tmdbid)
         else:
-            # 按输入名称查
             media_info = _media.get_media_info(mtype=media_type or mtype,
                                                title=content)
 

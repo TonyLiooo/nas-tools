@@ -39,12 +39,14 @@ class SiteConf:
     _SITE_LOGIN_XPATH = {
         "username": [
             '//input[@name="username"]',
+            '//input[@name="txt_email"]',
             '//input[@class="username"]',
             '//input[@id="form_item_username"]',
             '//input[@id="username"]'
         ],
         "password": [
             '//input[@name="password"]',
+            '//input[@name="txt_pwd"]',
             '//input[@class="password"]',
             '//input[@type="password"]',
             '//input[@id="form_item_password"]',
@@ -53,16 +55,20 @@ class SiteConf:
         "captcha": [
             '//input[@name="imagestring"]',
             '//input[@name="captcha"]',
+            '//input[@name="txt_code"]',
             '//input[@id="form_item_captcha"]'
         ],
         "captcha_img": [
             '//img[@alt="CAPTCHA"]/@src',
             '//img[@alt="SECURITY CODE"]/@src',
             '//img[@id="LAY-user-get-vercode"]/@src',
-            '//img[contains(@src,"/api/getCaptcha")]/@src'
+            '//img[contains(@src,"/api/getCaptcha")]/@src',
+            '//img[contains(@src,"login_image.php")]/@src'
         ],
         "submit": [
             '//input[@id="submit-btn"]',
+            '//input[@id="btn_login"]',
+            '//input[@name="btn_login"]',
             '//input[@type="submit" or @id="submit-btn" or @id="submit"]',
             '//button[@type="submit" or @id="submit-btn" or @id="submit"]',
             '//button[@lay-filter="login"]',

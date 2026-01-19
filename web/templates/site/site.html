@@ -498,6 +498,16 @@
 </div>
 <script type="text/javascript">
   var Sites = {{ Sites | tojson }};
+  // 站点测试SSE连接集合（用于批量关闭）
+  var SiteTestSSEs = {};
+  function stop_sitetest_streams() {
+    try {
+      Object.keys(SiteTestSSEs).forEach(function(k){
+        try { SiteTestSSEs[k] && SiteTestSSEs[k].close && SiteTestSSEs[k].close(); } catch(e){}
+      });
+    } catch(e) {}
+    SiteTestSSEs = {};
+  }
   //打开新增站点框
   function show_site_modal() {
     $("#site_id").val('');
@@ -744,26 +754,139 @@
 
   //显示测试站点
   function show_sitetest_modal() {
-    $("#modal-sitetest").modal("show");
+    $("#modal-sitetest").off('hidden.bs.modal').on('hidden.bs.modal', function(){
+      stop_sitetest_streams();
+    }).modal("show");
   }
 
   //测试一个站点
   function test_one_site(siteid, callBack) {
     if (!siteid) {
+      if (callBack) callBack(true);
       return;
     }
-    ajax_post("test_site", { id: siteid }, function (ret) {
-      if (ret.code === 0) {
+    // 统一站点ID为数字，避免前导零/字符串导致后端查找失败
+    siteid = Number(siteid);
+    let finished = false;
+    let wsHandled = false;
+    let ws;
+    let sse;
+    function formatTimeText(ms) {
+      let num = parseInt(ms || 0, 10);
+      if (isNaN(num)) num = 0;
+      if (num >= 1000) {
+        const sec = num / 1000;
+        const val = (Math.round(sec * 100) / 100).toFixed(2);
+        return `${val} 秒`;
+      }
+      return `${num} 毫秒`;
+    }
+    function finish(ret){
+      if (finished) return;
+      finished = true;
+      try { if (sse) { sse.close(); } } catch(e){}
+      try { if (ws) { ws.close(); } } catch(e){}
+      try {
+        if (SiteTestSSEs && SiteTestSSEs[siteid]) {
+          try { SiteTestSSEs[siteid].close(); } catch(e){}
+          delete SiteTestSSEs[siteid];
+        }
+      } catch(e){}
+      if (ret && ret.code === 0) {
         $(`#sitetest_item${siteid}`).html('<span class="badge bg-green me-1 mb-1">是</span>');
-        $(`#sitetest_item${siteid}_time`).html(`<span class="text-green">${ret.time} 毫秒</span>`);
+        $(`#sitetest_item${siteid}_time`).html(`<span class="text-green">${formatTimeText(ret.time)}</span>`);
         $(`#sitetest_item${siteid}_msg`).html('');
       } else {
         $(`#sitetest_item${siteid}`).html('<span class="badge bg-red me-1 mb-1">否</span>');
-        $(`#sitetest_item${siteid}_time`).html(`<span class="text-red">${ret.time} 毫秒</span>`);
-        $(`#sitetest_item${siteid}_msg`).html(`<span class="text-muted">${ret.msg}</span>`);
+        $(`#sitetest_item${siteid}_time`).html(`<span class="text-red">${formatTimeText(ret && ret.time)}</span>`);
+        $(`#sitetest_item${siteid}_msg`).html(`<span class="text-muted">${(ret && ret.msg) || ''}</span>`);
       }
-      callBack(true);
-    });
+      if (callBack) callBack(true);
+    }
+    function startBackgroundTask() {
+      if (finished) return;
+      ajax_post("start_test_site", { id: siteid }, function (r) {
+        if (!r || r.code !== 0 || !r.task_id) {
+          finish({code: -1, msg: (r && r.msg) || "后台任务启动失败", time: 0});
+          return;
+        }
+        let poll = setInterval(function(){
+          ajax_post("get_test_site", { task_id: r.task_id }, function (res) {
+            if (!res || res.code === 1) {
+              return;
+            }
+            clearInterval(poll);
+            finish(res);
+          }, true, false);
+        }, 2000);
+      }, true, false);
+    }
+    function startAjaxFlow() {
+      if (finished) return;
+      let fallbackTimer = setTimeout(function(){
+        startBackgroundTask();
+      }, 45000);
+      ajax_post("test_site", { id: siteid }, function (ret) {
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        finish(ret);
+      });
+    }
+    function startSseFlow() {
+      if (finished) return;
+      try { if (sse) sse.close(); } catch(e){}
+      sse = new EventSource(`api/site/test/stream?id=${encodeURIComponent(siteid)}`);
+      SiteTestSSEs[siteid] = sse;
+      let sseHandled = false;
+      sse.onmessage = function (ev) {
+        if (finished) return;
+        try {
+          const ret = JSON.parse(ev.data || '{}');
+          // 心跳（code===1）不中断
+          if (ret && ret.code === 1) return;
+          sseHandled = true;
+          finish(ret);
+        } catch(e) {
+          // 无法解析，直接走Ajax
+          sseHandled = true;
+          try { sse.close(); } catch(e){}
+          startAjaxFlow();
+        }
+      };
+      sse.onerror = function () {
+        try { sse.close(); } catch(e){}
+        if (!finished) startAjaxFlow();
+      };
+    }
+    try {
+      const wsUrl = (typeof WSProtocol !== 'undefined' ? WSProtocol : (window.location.protocol === 'https:' ? 'wss://' : 'ws://'))
+        + window.location.host + '/ws-test-site?id=' + encodeURIComponent(siteid);
+      ws = new WebSocket(wsUrl);
+      wsHandled = false;
+      ws.onmessage = function (event) {
+        try {
+          const ret = JSON.parse(event.data || '{}');
+          // 心跳消息（code===1）仅用于保持连接，不结束流程
+          if (ret && ret.code === 1) {
+            return;
+          }
+          wsHandled = true;
+          finish(ret);
+        } catch (e) {
+          wsHandled = true;
+          startSseFlow();
+        }
+        try { ws.close(); } catch (e) {}
+      };
+      ws.onerror = function () {
+        try { ws.close(); } catch (e) {}
+        if (!wsHandled) startSseFlow();
+      };
+      ws.onclose = function () {
+        if (!wsHandled && !finished) startSseFlow();
+      };
+    } catch (e) {
+      startSseFlow();
+    }
   }
 
   // 显示更新站点Cookie和UA对话框
@@ -950,16 +1073,34 @@
     let sitetest_count_finished = 0;
     btn_obj.text("测试中...").attr("disabled", true);
 
-    for (let siteid of siteids) {
-      test_one_site(siteid, ret=>{
-        if (ret) {
-          sitetest_count_finished++;
-          if (sitetest_count_finished >= sitetest_count_totol) {
-            btn_obj.text("重新测试").attr("disabled", false);
-          }
-        }
-      })
+    if (sitetest_count_totol === 0) {
+      btn_obj.text("重新测试").attr("disabled", false);
+      return;
     }
+
+    const concurrency = 5;
+    const queue = siteids.slice();
+    async function runNext() {
+      if (queue.length === 0) return;
+      const siteid = queue.shift();
+      await new Promise(resolve => {
+        test_one_site(siteid, ret => {
+          if (ret) {
+            sitetest_count_finished++;
+            if (sitetest_count_finished >= sitetest_count_totol) {
+              btn_obj.text("重新测试").attr("disabled", false);
+            }
+          }
+          resolve(true);
+        });
+      });
+      return runNext();
+    }
+    const runners = [];
+    for (let i = 0; i < Math.min(concurrency, queue.length); i++) {
+      runners.push(runNext());
+    }
+    await Promise.all(runners);
   });
 
   function copyCommand() {

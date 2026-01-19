@@ -75,8 +75,6 @@ class CloudflareSpeedTest(_IPluginModule):
     _httping = False
     _delay_limit = None
     _speed_limit = None
-    # 更新记录列表
-    _last_run_results_list = None
 
     # 退出事件
     _event = Event()
@@ -264,6 +262,28 @@ class CloudflareSpeedTest(_IPluginModule):
         """
         插件的额外页面，返回页面标题和页面内容
         """
+        results_list = []
+        all_history = self.get_history()
+        if all_history:
+            # 计算30天前的日期时间
+            cutoff_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+            for hist in all_history:
+                if isinstance(hist, dict) and hist.get("date"):
+                    # 只保留30天内的记录
+                    if hist.get("date") >= cutoff_date:
+                        record = CloudflareSpeedTestResult(
+                            date=hist.get("date", ""),
+                            ip_type=hist.get("ip_type", ""),
+                            old_ip=hist.get("old_ip", ""),
+                            new_ip=hist.get("new_ip", ""),
+                            status=hist.get("status", ""),
+                            msg=hist.get("msg", "")
+                        )
+                        if not any(item.date == record.date and item.old_ip == record.old_ip and item.new_ip == record.new_ip for item in results_list):
+                            results_list.append(record)
+        results_list.sort(key=lambda x: x.date, reverse=True)
+        results_list = results_list[:50]
+        
         template = """
           <div class="table-responsive table-modal-body">
             <table class="table table-vcenter card-table table-hover table-striped">
@@ -300,17 +320,22 @@ class CloudflareSpeedTest(_IPluginModule):
             </table>
           </div>
         """
-        results_count = len(self._last_run_results_list) if self._last_run_results_list else 0
         return "优选记录", Template(template).render(
-            ResultsCount=results_count,
-            Results=self._last_run_results_list or []
+            ResultsCount=len(results_list),
+            Results=results_list
         ), None
+
+    @staticmethod
+    def get_command():
+        return {
+            "cmd": "/cf",
+            "event": EventType.CloudflareSpeedTest,
+            "desc": "CF优选",
+            "data": {}
+        }
 
     def init_config(self, config=None):
         self.eventmanager = EventManager()
-
-        # 初始化更新记录列表
-        self._last_run_results_list = []
 
         # 读取配置
         if config:
@@ -374,7 +399,8 @@ class CloudflareSpeedTest(_IPluginModule):
             else:
                 self.warn("没有添加任何任务到调度器")
 
-    def __cloudflareSpeedTest(self):
+    @EventHandler.register(EventType.CloudflareSpeedTest)
+    def __cloudflareSpeedTest(self, event=None):
         """
         CloudflareSpeedTest优选
         """
@@ -464,24 +490,28 @@ class CloudflareSpeedTest(_IPluginModule):
         if hosts:
             for host in hosts:
                 if host and host != '\n':
-                    host_arr = str(host).split()
+                    line = str(host).rstrip('\r\n')
+                    if not line:
+                        continue
+                    host_arr = line.split()
                     if len(host_arr) > 0 and host_arr[0] == self._cf_ip:
-                        new_hosts.append(host.replace(self._cf_ip, best_ip))
-                    else:
-                        new_hosts.append(host)
+                        line = (f"{best_ip} {' '.join(host_arr[1:])}").strip()
+                    new_hosts.append(line + '\n')
+
+        hosts_text = ''.join(new_hosts)
 
         # 更新自定义Hosts（智能保留所有其他配置项）
         if customHosts:
             # 基于现有配置进行更新，保留所有其他字段
             current_config = customHosts.copy()  # 复制完整配置
             # 只更新需要修改的字段
-            current_config["hosts"] = new_hosts
+            current_config["hosts"] = hosts_text
             current_config["err_hosts"] = err_hosts
             current_config["enable"] = enable
         else:
             # 如果没有现有配置，创建基础配置
             current_config = {
-                "hosts": new_hosts,
+                "hosts": hosts_text,
                 "err_hosts": err_hosts,
                 "enable": enable
             }
@@ -596,31 +626,24 @@ class CloudflareSpeedTest(_IPluginModule):
         """
         添加优选记录
         """
-        if not self._last_run_results_list:
-            self._last_run_results_list = []
-
-        # 最多保存50条记录
-        if len(self._last_run_results_list) >= 50:
-            self._last_run_results_list = self._last_run_results_list[:49]
-
         # 获取当前时间
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # 确定IP类型
         ip_type = "IPv6" if self._ipv6 and not self._ipv4 else "IPv4"
 
-        # 创建记录
-        record = CloudflareSpeedTestResult(
-            date=current_time,
-            ip_type=ip_type,
-            old_ip=old_ip or "未知",
-            new_ip=new_ip or "未知",
-            status=status,
-            msg=msg
-        )
-
-        # 插入到列表开头
-        self._last_run_results_list.insert(0, record)
+        # 保存到数据库
+        record_dict = {
+            "date": current_time,
+            "ip_type": ip_type,
+            "old_ip": old_ip or "未知",
+            "new_ip": new_ip or "未知",
+            "status": status,
+            "msg": msg
+        }
+        self.history(key=f"cf_{current_time}", value=record_dict)
+        # 清理旧的历史记录（最多保留30天或50条）
+        self.clean_old_history(days=30, max_count=50)
 
     def __execute_speedtest(self, command):
         """

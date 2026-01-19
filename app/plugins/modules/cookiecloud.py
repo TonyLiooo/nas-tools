@@ -10,6 +10,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.plugins.modules._base import _IPluginModule
+from app.plugins import EventHandler
+from app.utils.types import EventType
 from app.sites import Sites
 from app.utils import RequestUtils, StringUtils, MteamUtils
 from config import Config
@@ -66,8 +68,6 @@ class CookieCloud(_IPluginModule):
     _scheduler = None
     # 当前用户
     _user = None
-    # 上次运行结果属性
-    _last_run_results_list = None
     # 设置开关
     _req = None
     _server = None
@@ -88,6 +88,7 @@ class CookieCloud(_IPluginModule):
     _synchronousMode = 'all_mode'
     _black_list = None
     _white_list = None
+    _auto_add_to_whitelist = False
 
     # Constants
     BLOCK_SIZE = 16
@@ -200,6 +201,13 @@ class CookieCloud(_IPluginModule):
                             'id': 'notify',
                         },
                         {
+                            'title': '自动加入白名单',
+                            'required': "",
+                            'tooltip': '开启后，同步成功（更新或新增）的站点会自动加入白名单',
+                            'type': 'switch',
+                            'id': 'auto_add_to_whitelist',
+                        },
+                        {
                             'title': '立即运行一次',
                             'required': "",
                             'tooltip': '打开后立即运行一次（点击此对话框的确定按钮后即会运行，周期未设置也会运行），关闭后将仅按照定时周期运行（同时上次触发运行的任务如果在运行中也会停止）',
@@ -248,9 +256,24 @@ class CookieCloud(_IPluginModule):
         插件的额外页面，返回页面标题和页面内容
         :return: 标题，页面内容，确定按钮响应函数
         """
-        if not isinstance(self._last_run_results_list, list) or len(self._last_run_results_list) <= 0:
-            self.info("未获取到上次运行结果")
-            return None, None, None
+        results_list = []
+        all_history = self.get_history()
+        if all_history:
+            # 计算30天前的日期时间
+            cutoff_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+            for hist in all_history:
+                if isinstance(hist, dict) and hist.get("date"):
+                    # 只保留30天内的记录
+                    if hist.get("date") >= cutoff_date:
+                        result = CookieCloudRunResult(
+                            date=hist.get("date", ""),
+                            flag=hist.get("flag", False),
+                            msg=hist.get("msg", "")
+                        )
+                        if not any(item.date == result.date and item.msg == result.msg for item in results_list):
+                            results_list.append(result)
+        results_list.sort(key=lambda x: x.date if x.date else "", reverse=True)
+        results_list = results_list[:50]
 
         template = """
           <div class="table-responsive table-modal-body">
@@ -274,16 +297,28 @@ class CookieCloud(_IPluginModule):
                     <td>{{ Item.flag }}</td>
                   </tr>
                 {% endfor %}
+              {% else %}
+                <tr>
+                  <td colspan="4" class="text-center">暂无同步记录</td>
+                </tr>
               {% endif %}
               </tbody>
             </table>
           </div>
         """
-        return "同步记录", Template(template).render(ResultsCount=len(self._last_run_results_list), Results=self._last_run_results_list), None
+        return "同步记录", Template(template).render(ResultsCount=len(results_list), Results=results_list), None
+
+    @staticmethod
+    def get_command():
+        return {
+            "cmd": "/cks",
+            "event": EventType.CookieCloudSync,
+            "desc": "Cookie同步",
+            "data": {}
+        }
 
     def init_config(self, config=None):
         self.sites = Sites()
-        self._last_run_results_list = []
         self._user = ProUser()
 
         # 读取配置
@@ -298,6 +333,7 @@ class CookieCloud(_IPluginModule):
             self._synchronousMode = config.get("synchronousMode", "all_mode") or "all_mode"
             self._black_list = config.get("black_list", "") or ""
             self._white_list = config.get("white_list", "") or ""
+            self._auto_add_to_whitelist = config.get("auto_add_to_whitelist", False)
             self._req = RequestUtils(content_type="application/json")
             if self._server:
                 if not self._server.startswith("http"):
@@ -309,8 +345,7 @@ class CookieCloud(_IPluginModule):
             flag = self.check_connection()
             _last_run_date = self.__get_current_date_str()
             _last_run_msg = "测试连通性成功" if flag else "测试连通性失败"
-            _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=_last_run_msg)
-            self._last_run_results_list.insert(0, _result)
+            self.history(key=f"cookiecloud_{_last_run_date}", value={"date": _last_run_date, "flag": flag, "msg": _last_run_msg})
             if flag:
                 self._enabled = True
             else:
@@ -341,6 +376,7 @@ class CookieCloud(_IPluginModule):
                     "synchronousMode": self._synchronousMode,
                     "black_list": self._black_list,
                     "white_list": self._white_list,
+                    "auto_add_to_whitelist": self._auto_add_to_whitelist,
                 })
 
             # 周期运行
@@ -454,28 +490,24 @@ class CookieCloud(_IPluginModule):
         else:
             return {}, "CookieCloud请求失败，请检查服务器地址、用户KEY及加密密码是否正确", False
         
-    def __cookie_sync(self):
+    @EventHandler.register(EventType.CookieCloudSync)
+    def __cookie_sync(self, event=None):
         """
         同步站点Cookie
         """
         # 同步数据
         self.info(f"同步服务开始 ...")
-        # 最多显示50条同步数据
-        if len(self._last_run_results_list) > 50:
-            self._last_run_results_list = []
         _last_run_date = self.__get_current_date_str()
         contents, msg, flag = self.__download_data()
         if not flag:
             self.error(msg)
             self.__send_message(msg)
-            _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-            self._last_run_results_list.insert(0, _result)
+            self.history(key=f"cookiecloud_{_last_run_date}", value={"date": _last_run_date, "flag": flag, "msg": msg})
             return
         if not contents:
             self.info(f"未从CookieCloud获取到数据")
             self.__send_message(msg)
-            _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-            self._last_run_results_list.insert(0, _result)
+            self.history(key=f"cookiecloud_{_last_run_date}", value={"date": _last_run_date, "flag": flag, "msg": msg})
             return
         # 整理数据,使用domain域名的最后两级作为分组依据
         domain_groups = defaultdict(lambda: {"cookie": [], "local_storage": ""})
@@ -508,13 +540,14 @@ class CookieCloud(_IPluginModule):
         update_count = 0
         add_count = 0
         upload_count = 0
+        # 自动加入白名单的站点列表
+        auto_whitelist_domains = []
         # 索引器
         sites_info = self.sites._siteByUrls
         for domain_url, content_list in domain_groups.items():
             if self._event.is_set():
                 self.info(f"同步服务停止")
-                _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-                self._last_run_results_list.insert(0, _result)
+                self.history(key=f"cookiecloud_{_last_run_date}", value={"date": _last_run_date, "flag": flag, "msg": msg})
                 return
             if content_list["cookie"]:
                 # 只有cf的cookie过滤掉
@@ -560,6 +593,8 @@ class CookieCloud(_IPluginModule):
                     if local_storage:
                         self.sites.update_site_local_storage(siteid=site_info.get("id"), local_storage=local_storage)
                     update_count += 1
+                    if self._auto_add_to_whitelist:
+                        auto_whitelist_domains.append(domain_url)
             else:
                 # 查询是否在索引器范围
                 indexer_conf = self._user.get_indexer(url=domain_url)
@@ -578,6 +613,8 @@ class CookieCloud(_IPluginModule):
                         rss_uses='T'
                     )
                     add_count += 1
+                    if self._auto_add_to_whitelist:
+                        auto_whitelist_domains.append(domain_url)
         if self._enable_upload and sites_info:
             for domain_url, site_info in sites_info.items():
                 check_flag, success, _, web_data = asyncio.run(self.sites.test_connection(site_id=site_info.get("id")))
@@ -600,8 +637,36 @@ class CookieCloud(_IPluginModule):
         else:
             msg = f"同步完成，但未更新任何站点数据！"
         self.info(msg)
-        _result = CookieCloudRunResult(date=_last_run_date, flag=flag, msg=msg)
-        self._last_run_results_list.insert(0, _result)
+        
+        # 自动加入白名单
+        if self._auto_add_to_whitelist and auto_whitelist_domains:
+            current_whitelist = self._white_list or ""
+            whitelist_items = [item.strip() for item in re.split(",|\n|，|\t| ", current_whitelist) if item.strip()]
+            added_count = 0
+            for domain in auto_whitelist_domains:
+                if domain and domain not in whitelist_items:
+                    whitelist_items.append(domain)
+                    added_count += 1
+            if added_count > 0:
+                self._white_list = "\n".join(whitelist_items)
+                self.update_config({
+                    "server": self._server,
+                    "cron": self._cron,
+                    "key": self._key,
+                    "password": self._password,
+                    "enable_upload": self._enable_upload,
+                    "notify": self._notify,
+                    "onlyonce": self._onlyonce,
+                    "synchronousMode": self._synchronousMode,
+                    "black_list": self._black_list,
+                    "white_list": self._white_list,
+                    "auto_add_to_whitelist": self._auto_add_to_whitelist,
+                })
+                self.info(f"已将 {added_count} 个同步成功的站点自动加入白名单")
+        
+        self.history(key=f"cookiecloud_{_last_run_date}", value={"date": _last_run_date, "flag": flag, "msg": msg})
+        # 清理旧的历史记录（最多保留30天或50条）
+        self.clean_old_history(days=30, max_count=50)
         # 发送消息
         if self._notify:
             self.__send_message(msg)
@@ -614,6 +679,8 @@ class CookieCloud(_IPluginModule):
             title="【CookieCloud同步任务执行完成】",
             text=f"{msg}"
         )
+
+    
 
     def stop_service(self):
         """

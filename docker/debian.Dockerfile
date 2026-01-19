@@ -29,6 +29,7 @@ RUN set -xe && \
     pip install --upgrade pip setuptools wheel && \
     pip install cython && \
     pip install -r https://raw.githubusercontent.com/TonyLiooo/nas-tools/master/requirements.txt && \
+    pip install feapder==1.9.2 --no-deps && \
     apt-get remove -y build-essential && \
     apt-get autoremove -y && \
     apt-get clean -y && \

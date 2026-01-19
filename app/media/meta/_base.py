@@ -148,7 +148,7 @@ class MetaBase(object):
     _subtitle_flag = False
     _subtitle_season_re = r"(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十S\-]+)\s*季(?!\s*[全共])"
     _subtitle_season_all_re = r"[全共]\s*([0-9一二三四五六七八九十]+)\s*季|([0-9一二三四五六七八九十]+)\s*季\s*全"
-    _subtitle_episode_re = r"(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十百零EP\-]+)\s*[集话話期](?!\s*[全共])"
+    _subtitle_episode_re = r"(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十百零]+)\s*[集话話期][\s\-~～至]+[第\s]*([0-9一二三四五六七八九十百零]+)\s*[集话話期](?!\s*[全共])|(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十百零EP\-~～至]+)\s*[集话話期](?!\s*[全共])"
     _subtitle_episode_all_re = r"([0-9一二三四五六七八九十百零]+)\s*集\s*全|[全共]\s*([0-9一二三四五六七八九十百零]+)\s*[集话話期]"
 
     def __init__(self,
@@ -738,23 +738,36 @@ class MetaBase(object):
             # 第x集
             episode_str = re.search(r'%s' % self._subtitle_episode_re, title_text, re.IGNORECASE)
             if episode_str:
-                episodes = episode_str.group(1)
-                if episodes:
-                    episodes = episodes.upper().replace("E", "").replace("P", "").strip()
-                else:
-                    return
+                episodes_part1 = episode_str.group(1) if episode_str.lastindex >= 1 else None
+                episodes_part2 = episode_str.group(2) if episode_str.lastindex >= 2 else None
+                episodes_part3 = episode_str.group(3) if episode_str.lastindex >= 3 else None
+                
                 try:
+                    begin_episode = None
                     end_episode = None
-                    if episodes.find('-') != -1:
-                        episodes = episodes.split('-')
-                        begin_episode = int(cn2an.cn2an(episodes[0].strip(), mode='smart'))
-                        if len(episodes) > 1:
-                            end_episode = int(cn2an.cn2an(episodes[1].strip(), mode='smart'))
-                    else:
-                        begin_episode = int(cn2an.cn2an(episodes, mode='smart'))
+                    
+                    if episodes_part1 and episodes_part2:
+                        begin_episode = int(cn2an.cn2an(episodes_part1.strip(), mode='smart'))
+                        end_episode = int(cn2an.cn2an(episodes_part2.strip(), mode='smart'))
+                    elif episodes_part3:
+                        episodes = episodes_part3.upper().replace("E", "").replace("P", "").strip()
+                        for sep in ['-', '~', '～', '至']:
+                            if sep in episodes:
+                                parts = episodes.split(sep, 1)
+                                begin_episode = int(cn2an.cn2an(parts[0].strip(), mode='smart'))
+                                if len(parts) > 1 and parts[1].strip():
+                                    end_episode = int(cn2an.cn2an(parts[1].strip(), mode='smart'))
+                                break
+                        if begin_episode is None:
+                            begin_episode = int(cn2an.cn2an(episodes, mode='smart'))
+                    
+                    if begin_episode is None:
+                        return
+                        
                 except Exception as err:
                     ExceptionUtils.exception_traceback(err)
                     return
+                    
                 if self.begin_episode is None and isinstance(begin_episode, int):
                     self.begin_episode = begin_episode
                     self.total_episodes = 1

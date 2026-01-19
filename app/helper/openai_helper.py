@@ -41,24 +41,14 @@ class OpenAiHelper:
             )
         if self._api_url and not re.search(r"/v\d+", self._api_url):
             self._api_url += "/v1"
-        proxies : dict = {}
-        proxy = self._proxy.get("http", None)
-        if proxy:
-            if proxy.startswith("http"):
-                proxies["http://"] = proxy
-            elif "://" not in proxy:
-                proxies["http://"] = "http://" + proxy
-        proxy = self._proxy.get("https", None)
-        if proxy:
-            if proxy.startswith("http"):
-                proxies["https://"] = proxy
-            elif "://" not in proxy:
-                proxies["https://"] = "https://" + proxy
+        proxy_url = self._proxy.get("https") or self._proxy.get("http")
+        if proxy_url and "://" not in proxy_url:
+            proxy_url = "http://" + proxy_url
 
         self._client = OpenAI(
             base_url=self._api_url,
             api_key=self._api_key,
-            http_client=httpx.Client(proxies=proxies)
+            http_client=httpx.Client(proxy=proxy_url)
         )
 
     def get_state(self):

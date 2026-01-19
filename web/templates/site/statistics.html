@@ -11,6 +11,20 @@
     </div>
   </div>
 </div>
+<div id="statistics-auto-reload" data-is-updating="{{ 1 if IsUpdating else 0 }}" data-refresh-triggered="{{ 1 if RefreshTriggered else 0 }}" data-last-update-time="{{ LastUpdateTime or '' }}" style="display:none"></div>
+{% if IsUpdating %}
+<div class="container-xl">
+  <div class="alert alert-info" role="alert">
+    正在后台刷新站点数据，当前展示为缓存。
+  </div>
+</div>
+{% elif RefreshTriggered %}
+<div class="container-xl">
+  <div class="alert alert-success" role="alert">
+    已触发刷新任务，稍后数据将更新。
+  </div>
+</div>
+{% endif %}
 {% if SiteNames %}
   <div class="page-body">
     <div class="container-xl">
@@ -173,6 +187,9 @@
                 {% if SiteUserStatistics | count> 0 %}onclick="navmenu('statistics?refresh_force=1')"{% endif %}>
                   {{ SVG.refresh() }}
                 </a>
+                {% if IsUpdating %}
+                <span class="spinner-border spinner-border-sm text-muted ms-2" role="status"></span>
+                {% endif %}
               </div>
             </div>
             <div id="table-site-user-data" class="table-responsive">

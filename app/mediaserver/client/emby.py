@@ -439,23 +439,26 @@ class Emby(_IMediaClient):
             return None
         return None
 
-    def get_local_image_by_id(self, item_id, remote=True, inner=False):
+    def get_local_image_by_id(self, item_id, remote=True, inner=False, image_tag=None):
         """
         根据ItemId从媒体服务器查询本地图片地址
         :param: item_id: 在Emby中的ID
         :param: remote 是否远程使用，TG微信等客户端调用应为True
         :param: inner 是否NT内部调用，为True是会使用NT中转
+        :param: image_tag 图片的tag，用于绕过浏览器缓存，确保获取最新封面
         """
         if not self._host or not self._apikey:
             return None
+        # 构建图片URL，如果提供了image_tag则添加到URL中以确保获取最新封面
+        tag_param = f"?tag={image_tag}" if image_tag else ""
         if not remote:
-            image_url = "%sItems/%s/Images/Primary" % (self._host, item_id)
+            image_url = "%sItems/%s/Images/Primary%s" % (self._host, item_id, tag_param)
             if inner:
                 return self.get_nt_image_url(image_url)
             return image_url
         else:
             host = self._play_host or self._host
-            image_url = "%sItems/%s/Images/Primary" % (host, item_id)
+            image_url = "%sItems/%s/Images/Primary%s" % (host, item_id, tag_param)
             if IpUtils.is_internal(host):
                 return self.get_nt_image_url(url=image_url, remote=True)
             return image_url
@@ -581,8 +584,11 @@ class Emby(_IMediaClient):
                 case "tvshows":
                     library_type = MediaType.TV.value
                 case _:
-                    continue
-            image = self.get_local_image_by_id(library.get("Id"), remote=False, inner=True)
+                    library_type = MediaType.UNKNOWN.value
+            # 获取图片标签，用于确保封面及时更新
+            image_tags = library.get("ImageTags", {})
+            image_tag = image_tags.get("Primary") if image_tags else None
+            image = self.get_local_image_by_id(library.get("Id"), remote=False, inner=True, image_tag=image_tag)
             libraries.append({
                 "id": library.get("Id"),
                 "name": library.get("Name"),
@@ -756,14 +762,20 @@ class Emby(_IMediaClient):
                                                             remote=False,
                                                             inner=True)
                         else:
-                            image = self.get_local_image_by_id(item.get("Id"), remote=False, inner=True)
+                            # 获取图片标签以确保封面及时更新
+                            image_tags = item.get("ImageTags", {})
+                            image_tag = image_tags.get("Primary") if image_tags else None
+                            image = self.get_local_image_by_id(item.get("Id"), remote=False, inner=True, image_tag=image_tag)
                     else:
                         image = self.__get_backdrop_url(item_id=item.get("SeriesId"),
                                                         image_tag=item.get("SeriesPrimaryImageTag"),
                                                         remote=False,
                                                         inner=True)
                         if not image:
-                            image = self.get_local_image_by_id(item.get("SeriesId"), remote=False, inner=True)
+                            # 获取图片标签以确保封面及时更新
+                            image_tags = item.get("ImageTags", {})
+                            image_tag = image_tags.get("Primary") if image_tags else None
+                            image = self.get_local_image_by_id(item.get("SeriesId"), remote=False, inner=True, image_tag=image_tag)
                     ret_resume.append({
                         "id": item.get("Id"),
                         "name": title,
@@ -797,7 +809,10 @@ class Emby(_IMediaClient):
                         continue
                     item_type = MediaType.MOVIE.value if item.get("Type") == "Movie" else MediaType.TV.value
                     link = self.get_play_url(item.get("Id"))
-                    image = self.get_local_image_by_id(item_id=item.get("Id"), remote=False, inner=True)
+                    # 获取图片标签以确保封面及时更新
+                    image_tags = item.get("ImageTags", {})
+                    image_tag = image_tags.get("Primary") if image_tags else None
+                    image = self.get_local_image_by_id(item_id=item.get("Id"), remote=False, inner=True, image_tag=image_tag)
                     ret_latest.append({
                         "id": item.get("Id"),
                         "name": item.get("Name"),

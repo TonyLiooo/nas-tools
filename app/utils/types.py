@@ -101,6 +101,7 @@ class SiteSchema(Enum):
     FileList = "FileList"
     TNode = "TNode"
     Mteam = "Mteam"
+    FireFly = "FireFly"
 
 
 # 可监听事件
@@ -137,6 +138,12 @@ class EventType(Enum):
     MediaScrapStart = "media.scrap.start"
     # 插件重载
     PluginReload = "plugin.reload"
+    # CookieCloud 同步
+    CookieCloudSync = "cookiecloud.sync"
+    # CloudflareSpeedTest 优选
+    CloudflareSpeedTest = "cloudflare.speedtest"
+    # 自动备份
+    AutoBackup = "autobackup.run"
     # 豆瓣想看同步
     DoubanSync = "douban.sync"
     # 辅种任务开始
@@ -177,6 +184,10 @@ class SystemConfigKey(Enum):
     UserScraperConf = "UserScraperConf"
     # 索引站点
     UserIndexerSites = "UserIndexerSites"
+    # 企业微信应用菜单结构
+    WeComMenu = "WeComMenu"
+    # 企业微信菜单事件Key到命令的映射
+    WeComMenuKeyMap = "WeComMenuKeyMap"
 
 # 处理进度Key字典
 class ProgressKey(Enum):

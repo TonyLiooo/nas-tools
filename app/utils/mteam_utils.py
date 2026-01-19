@@ -183,13 +183,24 @@ class MteamUtils:
         return None
 
     @staticmethod
-    def buildRequestUtils(cookies=None, api_key=None, headers=None, proxies=False, content_type=None, accept_type=None, session=None, referer=None, timeout=30):
+    def buildRequestUtils(cookies=None, api_key=None, headers=None, proxies=False, content_type=None, accept_type=None, session=None, referer=None, timeout=(5, 20),
+                          retries=None, backoff_factor=None, status_forcelist=None, allowed_methods=None, exception_retries=None):
         if api_key:
             # use api key
             return RequestUtils(headers=headers, api_key=api_key, timeout=timeout, referer=referer,
                                 content_type=content_type, session=session, accept_type=accept_type,
-                                proxies=Config().get_proxies() if proxies else None)
+                                proxies=Config().get_proxies() if proxies else None,
+                                retries=retries if retries is not None else 3,
+                                backoff_factor=backoff_factor if backoff_factor is not None else 0.5,
+                                status_forcelist=status_forcelist,
+                                allowed_methods=allowed_methods,
+                                exception_retries=exception_retries)
         return RequestUtils(headers=headers, cookies=cookies, timeout=timeout, referer=referer,
                             content_type=content_type, session=session, accept_type=accept_type,
-                            proxies=Config().get_proxies() if proxies else None)
+                            proxies=Config().get_proxies() if proxies else None,
+                            retries=retries if retries is not None else 3,
+                            backoff_factor=backoff_factor if backoff_factor is not None else 0.5,
+                            status_forcelist=status_forcelist,
+                            allowed_methods=allowed_methods,
+                            exception_retries=exception_retries)
 

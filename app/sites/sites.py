@@ -55,6 +55,14 @@ class Sites:
         # 站点数据
         self._sites = self.dbhelper.get_config_site()
         for site in self._sites:
+            # 统一站点ID类型为整数，保证内存索引一致
+            try:
+                sid = int(site.ID)
+            except Exception:
+                try:
+                    sid = int(str(site.ID).strip())
+                except Exception:
+                    sid = site.ID
             # 站点属性
             site_note = self.__get_site_note_items(site.NOTE)
             # 站点用途：Q签到、D订阅、S刷流
@@ -77,7 +85,7 @@ class Sites:
                 brush_enable = False
                 statistic_enable = False
             site_info = {
-                "id": site.ID,
+                "id": sid,
                 "name": site.NAME,
                 "pri": site.PRI or 0,
                 "rssurl": site_rssurl,
@@ -103,14 +111,14 @@ class Sites:
                 "limit_seconds": site_note.get("limit_seconds"),
                 "strict_url": StringUtils.get_base_url(site_signurl or site_rssurl)
             }
-            # 以ID存储
-            self._siteByIds[site.ID] = site_info
+            # 以ID存储（统一为整数键）
+            self._siteByIds[sid] = site_info
             # 以域名存储
             site_strict_url = StringUtils.get_url_domain(site.SIGNURL or site.RSSURL)
             if site_strict_url:
                 self._siteByUrls[site_strict_url] = site_info
-            # 初始化站点限速器
-            self._limiters[site.ID] = SiteRateLimiter(
+            # 初始化站点限速器（与ID键类型保持一致）
+            self._limiters[sid] = SiteRateLimiter(
                 limit_interval=int(site_note.get("limit_interval")) * 60 if site_note.get("limit_interval") and str(
                     site_note.get("limit_interval")).isdigit() and site_note.get("limit_count") and str(
                     site_note.get("limit_count")).isdigit() else None,
@@ -138,7 +146,52 @@ class Sites:
         获取站点配置
         """
         if siteid:
-            return self._siteByIds.get(int(siteid)) or {}
+            try:
+                sid = int(siteid)
+            except Exception:
+                sid = siteid
+            val = self._siteByIds.get(sid)
+            if val is None:
+                try:
+                    val = self._siteByIds.get(int(str(siteid)))
+                except Exception:
+                    val = self._siteByIds.get(str(siteid))
+            # 兼容历史键：可能存在字符串键或带前导零的键
+            if not val:
+                sid_str = str(siteid)
+                sid_nz = sid_str.lstrip('0') or '0'
+                for k, v in self._siteByIds.items():
+                    ks = str(k)
+                    if ks == sid_str or (ks.lstrip('0') or '0') == sid_nz:
+                        val = v
+                        break
+                    vid = v.get('id')
+                    vs = str(vid)
+                    if vs == sid_str or (vs.lstrip('0') or '0') == sid_nz:
+                        val = v
+                        break
+            # 如果仍未命中，尝试刷新内存配置后再查一次
+            if not val:
+                self.init_config()
+                try:
+                    sid2 = int(siteid)
+                except Exception:
+                    sid2 = siteid
+                val = self._siteByIds.get(sid2) or self._siteByIds.get(str(siteid))
+                if not val:
+                    sid_str = str(siteid)
+                    sid_nz = sid_str.lstrip('0') or '0'
+                    for k, v in self._siteByIds.items():
+                        ks = str(k)
+                        if ks == sid_str or (ks.lstrip('0') or '0') == sid_nz:
+                            val = v
+                            break
+                        vid = v.get('id')
+                        vs = str(vid)
+                        if vs == sid_str or (vs.lstrip('0') or '0') == sid_nz:
+                            val = v
+                            break
+            return val or {}
         if siteurl:
             return self._siteByUrls.get(StringUtils.get_url_domain(siteurl)) or {}
 
@@ -169,11 +222,15 @@ class Sites:
         :param site_id: 站点ID
         :return: True为触发了流控，False为未触发
         """
-        if not self._limiters.get(site_id):
+        try:
+            sid = int(site_id)
+        except Exception:
+            sid = site_id
+        if not self._limiters.get(sid):
             return False
-        state, msg = self._limiters[site_id].check_rate_limit()
+        state, msg = self._limiters[sid].check_rate_limit()
         if msg:
-            log.warn(f"【Sites】站点 {self._siteByIds[site_id].get('name')} {msg}")
+            log.warn(f"【Sites】站点 {self._siteByIds[sid].get('name')} {msg}")
         return state
 
     def get_sites_by_suffix(self, suffix):
@@ -297,12 +354,12 @@ class Sites:
         if site_info.get("chrome") and chrome.get_status():
             # 计时
             start_time = datetime.now()
-            if not await chrome.visit(url=site_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, proxy=site_info.get("proxy")):
+            if not await chrome.visit(url=site_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, timeout=60, proxy=site_info.get("proxy")):
                 await chrome.quit()
                 return False, "Chrome模拟访问失败", 0, web_data
             # 循环检测是否过cf
             cloudflare = await chrome.pass_cloudflare()
-            seconds = int((datetime.now() - start_time).microseconds / 1000)
+            seconds = int((datetime.now() - start_time).total_seconds() * 1000)
             if not cloudflare:
                 await chrome.quit()
                 return False, "跳转站点失败", seconds, web_data
@@ -311,7 +368,10 @@ class Sites:
             if not html_text:
                 await chrome.quit()
                 return False, "获取站点源码失败", 0, web_data
-            if await SiteHelper.wait_for_logged_in(chrome._tab):
+            tnode_token = None
+            if SiteHelper.is_tnode(html_text):
+                tnode_token = SiteHelper.extract_csrf_token(html_text) 
+            if await SiteHelper.wait_for_logged_in(chrome._tab) or tnode_token:
                 site_cookie = await chrome.get_cookies(str_format=False)
                 site_local_storage = await chrome.get_local_storage()
                 if site_cookie:
@@ -331,15 +391,19 @@ class Sites:
             start_time = datetime.now()
             res = RequestUtils(cookies=site_cookie,
                                headers=ua,
-                               proxies=Config().get_proxies() if site_info.get("proxy") else None
+                               proxies=Config().get_proxies() if site_info.get("proxy") else None,
+                               timeout=(10, 60)
                                ).get_res(url=site_url)
-            seconds = int((datetime.now() - start_time).microseconds / 1000)
+            seconds = int((datetime.now() - start_time).total_seconds() * 1000)
             if res and res.status_code == 200:
-                if not SiteHelper.is_logged_in(res.text):
-                    return False, "Cookie失效", seconds, web_data
-                else:
+                tnode_token = None
+                if SiteHelper.is_tnode(res.text):
+                    tnode_token = SiteHelper.extract_csrf_token(res.text) 
+                if SiteHelper.is_logged_in(res.text) or tnode_token:
                     web_data["cookies"] = chrome.string_to_cookie_params(site_cookie, url=site_url, json_format=True)
                     return True, "连接成功", seconds, web_data
+                else:
+                    return False, "Cookie失效", seconds, web_data
             elif res is not None:
                 return False, f"连接失败，状态码：{res.status_code}", seconds, web_data
             else:

@@ -2,6 +2,8 @@
 import json
 import re
 import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, wait, FIRST_COMPLETED, as_completed
 from abc import ABC
 from urllib.parse import urljoin, urlsplit
 
@@ -10,6 +12,7 @@ from lxml import etree
 import log
 from app.sites.siteuserinfo._base import _ISiteUserInfo, SITE_BASE_ORDER
 from app.utils import StringUtils, MteamUtils
+from config import Config
 from app.utils.exception_utils import ExceptionUtils
 from app.utils.types import SiteSchema
 
@@ -86,9 +89,9 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         self.leeching = StringUtils.str_int(leeching_match.group(2)) if leeching_match and leeching_match.group(
             2).strip() else 0
 
-        bonus_match = re.search(r"mybonus.[\[\]:：<>/a-zA-Z_\-=\"'\s#;.(使用魔力值豆]+\s*([\d,.]+)[<()&\s\[]", html_text)
+        bonus_match = re.search(r"魔力值.*?<span[^>]*>([\d,.]+)</span>", html_text)
         if bonus_match and bonus_match.group(1).strip():
-            self.bonus = StringUtils.str_float(bonus_match.group(1).strip('"'))
+            self.bonus = StringUtils.str_float(bonus_match.group(1).strip())
 
     def _parse_user_torrent_seeding_info(self, html_text, multi_page=False):
         pass
@@ -119,50 +122,58 @@ class MteamSiteUserInfo(_ISiteUserInfo):
                     html_text = await self.chrome.get_html()
                     html = etree.HTML(html_text)
                     soup = BeautifulSoup(html_text, 'lxml')
-                    tbody = soup.find('tbody', class_='ant-table-tbody')
+                    
+                    tbody = None
+                    modals = soup.find_all('div', class_='ant-modal-content')
+                    target_modal = next((m for m in modals
+                                         if (m.find('div', class_='ant-modal-title') and
+                                             '目前做種' in m.find('div', class_='ant-modal-title').get_text(strip=True))), None)
+
+                    if target_modal:
+                        tbody = target_modal.select_one('div.ant-modal-body tbody.ant-table-tbody') 
+                        if not tbody:
+                            tbody = target_modal.select_one('table[data-extentions-extra-tablecapture-id] tbody.ant-table-tbody')
+
                     if tbody:
-                        # Find all rows in the table body
                         rows = tbody.find_all('tr')
-                        # Extract data from each row
                         for row in rows:
                             cells = row.find_all('td')
 
-                            # Initialize variables with default values
                             category = title = description = size = seeders = leechers = upload = download = completed = 'N/A'
 
                             if len(cells) > 0:
-                                # Extract data from each cell
-                                category_img = cells[0].find('img')
-                                if category_img:
-                                    category = category_img.get('alt', 'N/A')
+                                category_tag = cells[0].find('span', class_=lambda x: x and 'cat-' in x)
+                                if category_tag:
+                                    category = category_tag.get_text(strip=True)
+                                
+                                title_strong = cells[0].find('strong')
+                                if title_strong:
+                                    title = title_strong.get_text(strip=True)
+                                
+                                description_spans = cells[0].find_all('span', class_='ant-typography-ellipsis')
+                                if len(description_spans) > 1:
+                                    description = description_spans[-1].get_text(strip=True)
 
                             if len(cells) > 1:
-                                title_strong = cells[1].find('strong')
-                                if title_strong:
-                                    title = title_strong.text
-
-                                description_spans = cells[1].find_all('span', class_='ant-typography-ellipsis')
-                                if len(description_spans) > 1:
-                                    description = description_spans[1].text
+                                size = cells[1].get_text(strip=True)
 
                             if len(cells) > 2:
-                                size = cells[2].text.strip()
+                                activity_div = cells[2].find('div', class_='ant-space')
+                                if activity_div:
+                                    activity_spans = activity_div.find_all('span')
+                                    number_spans = [span for span in activity_spans if span.get_text(strip=True).isdigit()]
+                                    if len(number_spans) >= 2:
+                                        seeders = number_spans[0].get_text(strip=True)
+                                        leechers = number_spans[1].get_text(strip=True)
 
                             if len(cells) > 3:
-                                seeders_spans = cells[3].find_all('span')
-                                if len(seeders_spans) > 1:
-                                    seeders = seeders_spans[1].text
-                                if len(seeders_spans) > 3:
-                                    leechers = seeders_spans[-1].text
+                                upload = cells[3].get_text(strip=True)
 
                             if len(cells) > 4:
-                                upload = cells[4].text.strip()
+                                download = cells[4].get_text(strip=True)
 
                             if len(cells) > 5:
-                                download = cells[5].text.strip()
-
-                            if len(cells) > 6:
-                                completed = cells[6].text.strip()
+                                completed = cells[5].get_text(strip=True)
 
                             # Print the extracted data
                             # print(f'Category: {category}')
@@ -182,9 +193,8 @@ class MteamSiteUserInfo(_ISiteUserInfo):
                     else:
                         log.debug('No tbody element found with the class "ant-table-tbody".')
 
-                    pagination_next = soup.find('li', class_='ant-pagination-next')
+                    pagination_next = target_modal.find('li', class_='ant-pagination-next') if target_modal else None
                     next_obj = await self.chrome._tab.find('//li[@title="下一頁" and contains(@class, "ant-pagination-next")]/button')
-                    # Extract the aria-disabled attribute
                     if pagination_next and pagination_next.get('aria-disabled', 'false')=='false' and next_obj:
                         await next_obj.click()
                     else:
@@ -218,7 +228,12 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         if not self.bonus:
             bonus_text = html.xpath('//tr/td[text()="魔力值" or text()="猫粮"]/following-sibling::td[1]/text()')
             if bonus_text:
-                self.bonus = StringUtils.str_float(bonus_text[0].strip())
+                full_text = bonus_text[0].strip()
+                first_number = re.search(r'^([\d,]+\.?\d*)', full_text)
+                if first_number:
+                    self.bonus = StringUtils.str_float(first_number.group(1))
+                else:
+                    self.bonus = 0
 
         # 加入日期
         join_at_text = html.xpath(
@@ -337,33 +352,94 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         """
         return "M-Team" in html_text
 
+    def _post_api(self, url, json=None):
+        use_proxy = bool(self._proxy)
+        timeout_direct = (10, 20)
+        timeout_proxy = (20, 20)
+        retries_direct = 1
+        retries_proxy = 1
+        backoff = 0.2
+        threshold = 15
+
+        def _do_post(proxies_flag, timeout, retries, exception_retries):
+            kwargs = {
+                "headers": self._ua,
+                "api_key": MteamUtils.get_api_key(self.site_url),
+                "session": self._session,
+                "proxies": proxies_flag,
+                "timeout": timeout,
+                "retries": retries,
+                "backoff_factor": backoff,
+                "status_forcelist": (408, 429, 500, 502, 503, 504),
+                "exception_retries": exception_retries,
+                # 禁止适配器对 POST 进行方法级重试，避免单轮多次长超时叠加
+                "allowed_methods": frozenset(["HEAD", "GET", "OPTIONS"]) 
+            }
+            if json is not None:
+                kwargs.update({
+                    "content_type": "application/json",
+                    "accept_type": "application/json",
+                })
+            res = MteamUtils.buildRequestUtils(**kwargs).post_res(url=url, json=json)
+            return res
+
+        if use_proxy:
+            return _do_post(True, timeout_proxy, retries_proxy, 1)
+
+        ex = ThreadPoolExecutor(max_workers=2)
+        try:
+            f_direct = ex.submit(_do_post, False, timeout_direct, retries_direct, 0)
+            try:
+                res = f_direct.result(timeout=threshold)
+                if res is not None and getattr(res, "status_code", None) == 200:
+                    return res
+            except FuturesTimeoutError:
+                pass
+
+            # small optimization: skip spawning proxy branch if no system proxies configured
+            if not Config().get_proxies():
+                try:
+                    return f_direct.result()
+                except Exception:
+                    return None
+
+            f_proxy = ex.submit(_do_post, True, timeout_proxy, retries_proxy, 1)
+            done, pending = wait({f_direct, f_proxy}, return_when=FIRST_COMPLETED)
+            for f in done:
+                try:
+                    res = f.result()
+                    if res is not None and getattr(res, "status_code", None) == 200:
+                        return res
+                except Exception:
+                    pass
+            for f in pending:
+                try:
+                    return f.result()
+                except Exception:
+                    return None
+        finally:
+            # do not wait for lingering futures; avoid blocking on slow direct after proxy wins
+            try:
+                ex.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+
     def _parse_logged_in(self, html_text):
         api = "%s/api/member/profile"
         api = api % MteamUtils.get_api_url(self.site_url)
-        res = MteamUtils.buildRequestUtils(
-            headers=self._ua,
-            api_key=MteamUtils.get_api_key(self.site_url),
-            timeout=15
-        ).post_res(url=api)
-        if res:
-            if res.status_code == 200:
-                user_info = res.json()
-                if user_info and user_info.get("data"):
-                    return True, "获取用户信息成功"
-            else:
-                return False, f"获取用户信息失败：{res.status_code}"
-
+        res = self._post_api(api)
+        if res and res.status_code == 200:
+            user_info = res.json()
+            if user_info and user_info.get("data"):
+                return True, "获取用户信息成功"
+        elif res is not None and res.status_code:
+            return False, f"获取用户信息失败：{res.status_code}"
         return False, "连接馒头失败"
 
     def get_user_profile(self):
         api = "%s/api/member/profile"
         api = api % MteamUtils.get_api_url(self.site_url)
-        res = MteamUtils.buildRequestUtils(
-            headers=self._ua,
-            api_key=MteamUtils.get_api_key(self.site_url),
-            session=self._session,
-            timeout=15
-        ).post_res(url=api)
+        res = self._post_api(api)
         if res and res.status_code == 200:
             user_info = res.json()
             if user_info and user_info.get("data"):
@@ -386,6 +462,11 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         # get first page
         all_seeding_info = []
         data = self.getSeedingPage(self.userid, 1, 200)
+        if not data or not data.get("data"):
+            self.seeding = 0
+            self.seeding_size = 0
+            self.seeding_info = json.dumps([])
+            return
         cur_list_size, seeding_info = self.parseSeedingList(data.get("data"))
         totalPages = StringUtils.str_int(data.get("totalPages"))
         total = data.get("total")
@@ -396,13 +477,15 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         all_seeding_info.extend(seeding_info)
 
         if totalPages > 1:
-            # 循环获取下一页
-            for index in range(2, totalPages):
-                data = self.getSeedingPage(self.userid, index, 200)
-                if data:
-                    cur_list_size, seeding_info = self.parseSeedingList(data.get("data"))
-                    self.seeding_size += cur_list_size
-                    all_seeding_info.extend(seeding_info)
+            page_indices = list(range(2, totalPages + 1))
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                futures = {ex.submit(self.getSeedingPage, self.userid, idx, 200): idx for idx in page_indices}
+                for f in as_completed(futures):
+                    page_data = f.result()
+                    if page_data and page_data.get("data"):
+                        cur_list_size, seeding_info = self.parseSeedingList(page_data.get("data"))
+                        self.seeding_size += cur_list_size
+                        all_seeding_info.extend(seeding_info)
 
         self.seeding_info = json.dumps(all_seeding_info)
 
@@ -415,15 +498,7 @@ class MteamSiteUserInfo(_ISiteUserInfo):
             "userid": user_id,
             "type": "SEEDING"
         }
-
-        res = MteamUtils.buildRequestUtils(
-            headers=self._ua,
-            content_type="application/json",
-            accept_type="application/json",
-            api_key=MteamUtils.get_api_key(self.site_url),
-            session=self._session,
-            timeout=15
-        ).post_res(api, json=params)
+        res = self._post_api(api, json=params)
 
         if res and res.status_code == 200:
             result = res.json()
@@ -453,16 +528,16 @@ class MteamSiteUserInfo(_ISiteUserInfo):
                 self.last_seen = memberStatus.get('lastBrowse')
 
                 self.parse_seeding()
-            else:
-                self.seeding_info = ''
-        elif SiteHelper.is_logged_in(self._index_html):
+                return
+                
+        if SiteHelper.is_logged_in(self._index_html):
 
             self._parse_site_page(self._index_html)
             self._parse_user_base_info(self._index_html)
             await self._pase_unread_msgs()
             if self._user_detail_page:
                 await self._parse_user_detail_info(await self._get_page_content(urljoin(self._base_url, self._user_detail_page)))
-        else:
-            self.seeding_info = ''   
+            return
+        self.seeding_info = ''    
 
 

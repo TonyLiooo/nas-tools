@@ -13,6 +13,9 @@ from config import Config, WEBDRIVER_PATH
 from math import ceil
 
 class SystemUtils:
+    _last_total_cpu = None
+    _last_proc_cpu = {}
+    _cpu_count = psutil.cpu_count() or 1
 
     @staticmethod
     def __get_hidden_shell():
@@ -386,20 +389,56 @@ class SystemUtils:
             return ret_str
 
         processes = []
+        try:
+            total_times = psutil.cpu_times()
+            total_now = sum(total_times) if total_times else 0.0
+        except Exception:
+            total_now = 0.0
+        last_total = SystemUtils._last_total_cpu
+        cpu_count = SystemUtils._cpu_count or (psutil.cpu_count() or 1)
+        new_last = {}
         for proc in psutil.process_iter(['pid', 'name', 'create_time', 'memory_info', 'status']):
             try:
                 if proc.status() != psutil.STATUS_ZOMBIE:
-                    runtime = datetime.datetime.now() - datetime.datetime.fromtimestamp(
-                        int(getattr(proc, 'create_time', 0)()))
+                    create_ts = 0
+                    try:
+                        create_ts = int(getattr(proc, 'create_time', 0)())
+                    except Exception:
+                        create_ts = 0
+                    runtime = datetime.datetime.now() - datetime.datetime.fromtimestamp(create_ts if create_ts else 0)
                     runtime_str = seconds_to_str(runtime.seconds)
+                    try:
+                        start_str = datetime.datetime.fromtimestamp(create_ts).strftime('%Y-%m-%d %H:%M:%S') if create_ts else ''
+                    except Exception:
+                        start_str = ''
                     mem_info = getattr(proc, 'memory_info', None)()
-                    if mem_info is not None:
-                        mem_mb = round(mem_info.rss / (1024 * 1024), 1)
-                        processes.append({
-                            "id": proc.pid, "name": proc.name(), "time": runtime_str, "memory": mem_mb
-                        })
+                    mem_mb = round(mem_info.rss / (1024 * 1024), 1) if mem_info is not None else 0.0
+                    try:
+                        cput = proc.cpu_times()
+                        proc_now = float(cput.user + cput.system) if cput else 0.0
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        proc_now = 0.0
+                    new_last[proc.pid] = proc_now
+                    last_proc = SystemUtils._last_proc_cpu.get(proc.pid)
+                    if last_total is not None and last_proc is not None and total_now > last_total:
+                        cpu_percent = (proc_now - last_proc) / ((total_now - last_total) or 1e-9) * 100.0
+                        cpu_percent = max(0.0, min(100.0 * cpu_count, cpu_percent))
+                    else:
+                        cpu_percent = 0.0
+                    processes.append({
+                        "id": proc.pid,
+                        "name": proc.name(),
+                        "status": getattr(proc, 'status', lambda: None)(),
+                        "cpu": round(cpu_percent, 1),
+                        "start": start_str,
+                        "start_epoch": create_ts,
+                        "time": runtime_str,
+                        "memory": mem_mb
+                    })
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
+        SystemUtils._last_total_cpu = total_now
+        SystemUtils._last_proc_cpu = new_last
         return processes
 
     # 缩略路径

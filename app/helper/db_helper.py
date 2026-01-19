@@ -2743,3 +2743,35 @@ class DbHelper:
         """
         self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id,
                                              PLUGINHISTORY.KEY == key).delete()
+
+    @DbPersist(_db)
+    def delete_plugin_history_by_date(self, plugin_id, before_date):
+        """
+        删除指定日期之前的插件运行记录
+        :param plugin_id: 插件ID
+        :param before_date: 日期字符串，格式：'YYYY-MM-DD HH:MM:SS'
+        """
+        if not plugin_id or not before_date:
+            return False
+        return self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id,
+                                                     PLUGINHISTORY.DATE < before_date).delete()
+
+    def get_plugin_history_count(self, plugin_id):
+        """
+        获取插件历史记录总数
+        :param plugin_id: 插件ID
+        """
+        if not plugin_id:
+            return 0
+        return self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id).count()
+
+    def get_plugin_history_oldest(self, plugin_id, limit=1):
+        """
+        获取最旧的插件历史记录
+        :param plugin_id: 插件ID
+        :param limit: 返回记录数
+        """
+        if not plugin_id:
+            return []
+        return self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id).order_by(
+            PLUGINHISTORY.DATE.asc()).limit(limit).all()

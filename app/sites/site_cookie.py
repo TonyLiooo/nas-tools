@@ -11,6 +11,7 @@ from app.sites.sites import Sites
 from app.utils import StringUtils, RequestUtils, ExceptionUtils
 from app.utils.commons import singleton
 from app.utils.types import ProgressKey
+from config import Config
 
 import asyncio
 
@@ -161,7 +162,7 @@ class SiteCookie(object):
                         code_url = self.__get_captcha_url(url, captcha_img_url)
                         if ocrflag:
                             # 自动OCR识别验证码
-                            captcha = await self.get_captcha_text(chrome, code_url)
+                            captcha = await self.get_captcha_text(chrome, code_url, proxy)
                             if captcha:
                                 log.info("【Sites】验证码地址为：%s，识别结果：%s" % (code_url, captcha))
                             else:
@@ -183,7 +184,7 @@ class SiteCookie(object):
                                 else:
                                     # 获取验证码图片base64
                                     if not code_bin:
-                                        code_bin = await self.get_captcha_base64(chrome, code_url)
+                                        code_bin = await self.get_captcha_base64(chrome, code_url, proxy)
                                         if not code_bin:
                                             await chrome.quit()
                                             return None, None, None, "获取验证码图片数据失败"
@@ -315,12 +316,13 @@ class SiteCookie(object):
                 error_msg = html.xpath(error_xpath)[0]
                 return None, None, None, error_msg
 
-    async def get_captcha_text(self, chrome, code_url):
+    async def get_captcha_text(self, chrome, code_url, proxy=None):
         """
         识别验证码图片的内容
         """
         code_b64 = await self.get_captcha_base64(chrome=chrome,
-                                           image_url=code_url)
+                                           image_url=code_url,
+                                           proxy=proxy)
         if not code_b64:
             return ""
         return self.ocrhelper.get_captcha_text(image_b64=code_b64)
@@ -408,7 +410,7 @@ class SiteCookie(object):
         return retcode, messages
 
     @staticmethod
-    async def get_captcha_base64(chrome, image_url):
+    async def get_captcha_base64(chrome, image_url, proxy=None):
         """
         根据图片地址，使用浏览器获取验证码图片base64编码
         """
@@ -417,8 +419,15 @@ class SiteCookie(object):
         cookies = await chrome.get_cookies()
         if not cookies:
             cookies = None
+        proxies_arg = None
+        if proxy:
+            if isinstance(proxy, dict):
+                proxies_arg = proxy
+            else:
+                proxies_arg = Config().get_proxies()
         ret = RequestUtils(headers=await chrome.get_ua(),
-                           cookies=cookies).get_res(image_url)
+                           cookies=cookies,
+                           proxies=proxies_arg).get_res(image_url)
         if ret:
             return base64.b64encode(ret.content).decode()
         return ""

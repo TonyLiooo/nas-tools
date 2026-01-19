@@ -9,6 +9,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from threading import Event
 from app.plugins.modules._base import _IPluginModule
+from app.plugins import EventHandler
+from app.utils.types import EventType
 from app.utils import SystemUtils
 from config import Config
 from web.action import WebAction
@@ -137,6 +139,15 @@ class AutoBackup(_IPluginModule):
             }
         ]
 
+    @staticmethod
+    def get_command():
+        return {
+            "cmd": "/bak",
+            "event": EventType.AutoBackup,
+            "desc": "备份数据",
+            "data": {}
+        }
+
     def init_config(self, config=None):
         # 读取配置
         if config:
@@ -184,7 +195,8 @@ class AutoBackup(_IPluginModule):
                 self._scheduler.print_jobs()
                 self._scheduler.start()
 
-    def __backup(self):
+    @EventHandler.register(EventType.AutoBackup)
+    def __backup(self, event=None):
         """
         自动备份、删除备份
         """

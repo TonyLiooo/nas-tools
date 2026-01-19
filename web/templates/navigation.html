@@ -16,6 +16,8 @@
   <link href="../static/css/nprogress.css" rel="stylesheet"/>
   <!-- 附加样式 -->
   <link href="../static/css/style.css" rel="stylesheet"/>
+  <!-- xterm terminal css (local) -->
+  <link rel="stylesheet" href="../static/vendor/xterm/xterm.css"/>
   <!-- 站点图标 -->
   <style>
   .siteicon-acgrip {
@@ -79,6 +81,9 @@
   <script src="../static/js/fullcalendar/fullcalendar.min.js"></script>
   <script src="../static/js/fullcalendar/locales/zh-cn.js"></script>
   <script src="../static/js/modules/reconnecting-websocket.js"></script>
+  <!-- xterm terminal scripts (local) -->
+  <script src="../static/vendor/xterm/xterm.min.js"></script>
+  <script src="../static/vendor/xterm/xterm-addon-fit.min.js"></script>
   <!-- lit -->
   <script type="module" src="../static/components/lit-index.js"></script>
   <!-- 解决密码填充问题 -->
@@ -129,6 +134,24 @@
     {% endif %}
   </div>
 </div>
+
+<!-- 命令终端 -->
+<div class="modal modal-blur fade" id="modal-terminal" tabindex="-1" role="dialog" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">终端</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-0" style="background:black;">
+        <div id="terminal_container" style="height:60vh; width:100%;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">关闭</button>
+      </div>
+    </div>
+  </div>
+  </div>
 <div class="offcanvas offcanvas-end" tabindex="-1" id="offcanvasEnd" aria-labelledby="消息中心">
   <div class="offcanvas-header">
     <h2 class="offcanvas-title" id="offcanvasEndLabel">消息中心</h2>
@@ -1172,6 +1195,7 @@
       stop_message();
       stop_logging();
       stop_progress();
+      try { stop_terminal(); } catch(e) {}
     });
 
     // tooltip点击事件处理，阻止冒泡到上级元素，避免比如`点击tooltip切换了switch`的问题

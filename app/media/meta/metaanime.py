@@ -175,7 +175,7 @@ class MetaAnime(MetaBase):
                     self.audio_encode = self.audio_encode[0]
                 # 解析副标题，只要季和集
                 self.init_subtitle(self.org_string)
-                if not self._subtitle_flag and self.subtitle:
+                if self.subtitle and (not self._subtitle_flag or self.begin_episode is None):
                     self.init_subtitle(self.subtitle)
             if not self.type:
                 self.type = MediaType.TV

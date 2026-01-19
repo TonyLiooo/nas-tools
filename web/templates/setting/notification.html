@@ -10,6 +10,124 @@
           消息通知
         </h2>
       </div>
+{% if HasWeCom %}
+<style>
+  .wecom-modal .modal-header-main { background: linear-gradient(135deg, #07C160 0%, #05a850 100%); color: #fff; }
+  .wecom-toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; min-height: 48px; }
+  .wecom-body { background: #f8f9fa; padding: 1.5rem; }
+  .wecom-card { border: none; border-radius: 12px; overflow: hidden; }
+  .wecom-left-list { max-height: 450px; overflow-y: auto; background: #fff; }
+  .wecom-menu-item { border: none; border-bottom: 1px solid #f0f0f0; padding: 1rem 1.25rem; background: #fff; transition: background .2s ease; cursor: pointer; }
+  .wecom-menu-item:hover { background: #f8f9fa; }
+  .wecom-menu-item.active { background: linear-gradient(135deg, #07C160 0%, #05a850 100%); color: #fff; }
+  .wecom-menu-item.active .badge { background: #fff; color: #07C160; }
+  .wecom-add-btn { background: linear-gradient(135deg, #07C160 0%, #05a850 100%); color: #fff; border: none; font-weight: 500; padding: .5rem; border-radius: 8px; transition: transform .2s ease; }
+  .wecom-add-btn:hover { transform: translateY(-2px); color: #fff; }
+  .wecom-btn-brand {
+    /* 仅调整颜色，完整继承 btn-primary 的状态与交互 */
+    --bs-btn-color: #fff;
+    --bs-btn-bg: #07C160;
+    --bs-btn-border-color: #07C160;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: #06b359;
+    --bs-btn-hover-border-color: #06b359;
+    --bs-btn-focus-shadow-rgb: 7, 193, 96;
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: #059b4d;
+    --bs-btn-active-border-color: #059b4d;
+    --bs-btn-disabled-color: #fff;
+    --bs-btn-disabled-bg: #07C160;
+    --bs-btn-disabled-border-color: #07C160;
+  }
+  /* 显式确保为绿色（避免主题/变量覆盖） */
+  .btn.wecom-btn-brand { background-color: #07C160 !important; border-color: #07C160 !important; color: #fff !important; }
+  .btn.wecom-btn-brand:hover,
+  .btn.wecom-btn-brand:focus { background-color: #06b359 !important; border-color: #06b359 !important; color: #fff !important; }
+  .btn.wecom-btn-brand:active,
+  .btn.wecom-btn-brand.active { background-color: #059b4d !important; border-color: #059b4d !important; color: #fff !important; }
+  .btn.wecom-btn-brand:disabled,
+  .btn.wecom-btn-brand.disabled { background-color: #07C160 !important; border-color: #07C160 !important; color: #fff !important; opacity: .65; }
+  .wecom-seg .btn { font-size: .85rem; }
+  .wecom-seg .btn-check:checked + .btn { background-color: #07C160; color: #fff; border-color: #07C160; }
+  .wecom-toolbar .btn.wecom-tool { width: 48px; height: 48px; border-radius: 10px; }
+  .wecom-toolbar .btn.wecom-tool .icon { width: 26px; height: 26px; }
+  .wecom-menu-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; line-height: 1.2; }
+  .wecom-modal .modal-header.bg-light { position: static !important; top: auto !important; z-index: 1; border-bottom: 1px solid #e9ecef; box-shadow: 0 1px 0 rgba(0,0,0,0.02); margin-bottom: .5rem; }
+  @media (max-width: 991.98px) { .wecom-body { padding: 1rem; } }
+</style>
+<div class="modal modal-blur fade wecom-modal" id="modal-wecom-menu" tabindex="-1" role="dialog" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable" role="document">
+    <div class="modal-content">
+      <div class="modal-header modal-header-main">
+        <h5 class="modal-title">
+          <svg xmlns="http://www.w3.org/2000/svg" class="icon me-2" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></svg>
+          企业微信应用菜单
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-header bg-light border-0 py-2 px-3">
+        <div class="wecom-toolbar">
+          <button class="btn btn-outline-secondary" onclick="load_wecom_menu()">刷新</button>
+          <button class="btn btn-outline-secondary" onclick="reset_wecom_menu()">重置为默认</button>
+          <div class="vr"></div>
+          <button class="btn btn-outline-danger" onclick="delete_wechat_menu()">删除远端</button>
+          <button class="btn btn-outline-secondary" onclick="get_wechat_menu_remote()">查看远端</button>
+        </div>
+      </div>
+      <div class="modal-body wecom-body">
+        <div class="row g-3">
+          <div class="col-12 col-lg-4">
+            <div class="card shadow-sm wecom-card">
+              <div class="card-header d-flex justify-content-between align-items-center" style="background: white; border-bottom: 2px solid #f0f0f0; padding: 1rem 1.25rem;">
+                <h3 class="mb-0" style="font-size: 0.95rem; font-weight: 600; color: #333;">菜单列表</h3>
+              </div>
+              <div class="list-group list-group-flush wecom-left-list" id="wecom_left_nav"></div>
+              <div class="card-footer" style="background: white; border-top: 2px solid #f0f0f0; padding: 0.75rem 1.25rem;">
+                <button class="btn btn-sm w-100 wecom-add-btn" onclick="add_top_button()">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-sm me-1" width="16" height="16" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>
+                  新增菜单
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-8">
+            <div class="card shadow-sm wecom-card">
+              <div class="card-body" id="wecom_right_panel" style="min-height: 450px; padding: 1.5rem; background: white;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer bg-light">
+        <button class="btn btn-primary" onclick="save_wecom_menu()">
+          <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="20" height="20" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" /><path d="M12 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /></svg>
+          保存草稿
+        </button>
+        <button class="btn btn-green" onclick="publish_wecom_menu()">
+          <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="20" height="20" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 9l5 -5l5 5" /><path d="M12 4l0 12" /></svg>
+          发布到企业微信
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal modal-blur fade" id="modal-remote-wecom-menu" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">远端菜单</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <pre id="remote_wecom_menu_pre" style="white-space: pre-wrap"></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link me-auto" data-bs-dismiss="modal">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
       <div class="col-auto ms-auto d-print-none">
         <div class="btn-list">
           <a href="javascript:show_add_message_client_modal()" class="btn btn-primary d-none d-sm-inline-block">
@@ -26,6 +144,15 @@
           </a>
           <a href="javascript:show_send_custom_message_modal()" class="btn btn-twitter d-sm-none btn-icon">
             {{ SVG.send() }}
+          </a>
+          {% endif %}
+          {% if HasWeCom %}
+          <a href="javascript:show_wecom_menu_modal()" class="btn btn-green d-none d-sm-inline-block">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></svg>
+            企业微信菜单
+          </a>
+          <a href="javascript:show_wecom_menu_modal()" class="btn btn-green d-sm-none btn-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></svg>
           </a>
           {% endif %}
         </div>
@@ -145,7 +272,7 @@
                   </span>
                   <span class="form-selectgroup-label-content d-flex align-items-center">
                     <span class="avatar avatar-sm avatar-thumb avatar-rounded"
-                          style="background-image: url({{ Attr.img_url }})"></span>
+                          style="background-image: url('{{ Attr.img_url }}')"></span>
                     <span class="form-selectgroup-title strong ms-1">{{ Attr.name }}</span>
                   </span>
                 </span>
@@ -486,3 +613,445 @@
   }
 
 </script>
+
+{% if HasWeCom %}
+<script type="text/javascript">
+  let WeComMenu = { buttons: [] };
+  let WeComCommands = [];
+  let ActiveTopIdx = 0;
+
+  function load_wecom_menu() {
+    ajax_post("get_wecom_menu", {}, function (ret) {
+      if (ret.code === 0) {
+        WeComMenu = ret.menu || { buttons: [] };
+        WeComCommands = ret.commands || [];
+        render_wecom_menu();
+      }
+    });
+  }
+
+  function render_wecom_menu() {
+    render_left_nav();
+    render_right_panel();
+  }
+
+  function render_left_nav() {
+    const nav = $("#wecom_left_nav");
+    nav.empty();
+    const buttons = WeComMenu.buttons || [];
+    
+    if (buttons.length === 0) {
+      nav.append(`
+        <div class="list-group-item text-center py-5" style="border: none;">
+          <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-lg text-muted mb-2" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></svg>
+          <p class="text-muted mb-0" style="font-size: 0.85rem;">暂无菜单<br><small>点击下方按钮添加</small></p>
+        </div>
+      `);
+      return;
+    }
+    
+    for (let i = 0; i < buttons.length; i++) {
+      const b = buttons[i] || {};
+      const subs = b.sub_buttons || [];
+      const menuType = b.type || 'container';
+      const name = b.name && b.name.trim() ? b.name.trim() : `未命名菜单 ${i + 1}`;
+      const isActive = i === ActiveTopIdx;
+      
+      let typeIcon = '';
+      let typeLabel = '';
+      if (menuType === 'click') {
+        typeIcon = '<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-sm me-1" width="14" height="14" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /><path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" /></svg>';
+        typeLabel = `<span class="badge bg-primary" style="font-size: 0.7rem; padding: 0.2rem 0.5rem;">点击</span>`;
+      } else {
+        typeIcon = '<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-sm me-1" width="14" height="14" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 6l6 6l-6 6" /></svg>';
+        typeLabel = `<span class="badge bg-secondary" style="font-size: 0.7rem; padding: 0.2rem 0.5rem;">${subs.length}项</span>`;
+      }
+      
+      const item = $(`
+        <div class="wecom-menu-item list-group-item ${isActive ? 'active' : ''}" style="cursor: default;">
+          <div class="d-flex align-items-center">
+            <div class="flex-fill" style="min-width: 0; cursor: pointer;" onclick="select_top(${i})">
+              <div class="d-flex align-items-center">
+                ${typeIcon}
+                <strong class="wecom-menu-name" style="font-size: 0.9rem;">${name}</strong>
+              </div>
+            </div>
+            <div class="d-flex align-items-center ms-2" onclick="event.stopPropagation()">
+              <div class="btn-group btn-group-sm d-flex" role="group">
+                <button class="btn ${isActive ? 'btn-outline-light' : 'btn-outline-secondary'}" onclick="move_top(${i}, -1)" title="上移" style="border-radius: 6px 0 0 6px; font-size: 0.75rem;">↑</button>
+                <button class="btn ${isActive ? 'btn-outline-light' : 'btn-outline-secondary'}" onclick="move_top(${i}, 1)" title="下移" style="font-size: 0.75rem;">↓</button>
+                <button class="btn ${isActive ? 'btn-outline-light' : 'btn-outline-danger'}" onclick="remove_top_button(${i})" title="删除" style="border-radius: 0 6px 6px 0; font-size: 0.75rem;">×</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `);
+      nav.append(item);
+    }
+  }
+
+  function render_right_panel() {
+    const panel = $("#wecom_right_panel");
+    panel.empty();
+    const buttons = WeComMenu.buttons || [];
+    
+    if (!buttons.length || ActiveTopIdx < 0 || ActiveTopIdx >= buttons.length) {
+      panel.append(`
+        <div class="text-center py-5" style="color: #999;">
+          <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-lg mb-3" width="64" height="64" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></svg>
+          <p style="font-size: 1rem; font-weight: 500; color: #666;">请在左侧选择或新增菜单</p>
+          <small style="color: #999;">支持两种类型：子菜单容器 或 直接点击</small>
+        </div>
+      `);
+      return;
+    }
+    
+    const top = buttons[ActiveTopIdx];
+    const menuType = top.type || 'container';
+    const subs = top.sub_buttons || [];
+    
+    // 顶部基本信息区
+    const header = $(`
+      <div class="mb-3 pb-3" style="border-bottom: 2px solid #f0f0f0;">
+        <div class="row g-3">
+          <div class="col-md-7">
+            <label class="form-label mb-2" style="font-size: 0.875rem; font-weight: 600; color: #495057;">菜单名称</label>
+            <input type="text" class="form-control" style="font-size: 0.9rem; border-radius: 8px;" 
+                   placeholder="如：常用工具、订阅管理" 
+                   value="${top.name || ''}" 
+                   oninput="on_top_name(${ActiveTopIdx}, this.value)">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label mb-2" style="font-size: 0.875rem; font-weight: 600; color: #495057;">菜单类型</label>
+            <div class="btn-group wecom-seg" role="group" aria-label="MenuType">
+              <input type="radio" class="btn-check" name="seg-${ActiveTopIdx}" id="seg-${ActiveTopIdx}-container" autocomplete="off" ${menuType === 'container' ? 'checked' : ''} onchange="on_top_type_change(${ActiveTopIdx}, 'container')">
+              <label class="btn btn-outline-secondary" for="seg-${ActiveTopIdx}-container">子菜单</label>
+              <input type="radio" class="btn-check" name="seg-${ActiveTopIdx}" id="seg-${ActiveTopIdx}-click" autocomplete="off" ${menuType === 'click' ? 'checked' : ''} onchange="on_top_type_change(${ActiveTopIdx}, 'click')">
+              <label class="btn btn-outline-secondary" for="seg-${ActiveTopIdx}-click">直接点击</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    `);
+    panel.append(header);
+    
+    // 根据类型显示不同内容
+    if (menuType === 'click') {
+      // 直接点击类型 - 选择功能
+      const clickSection = $(`
+        <div class="p-4 rounded-3" style="background: #f8f9fa;">
+          <h5 class="mb-3" style="font-size: 0.9rem; font-weight: 600; color: #333;">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-sm me-1" width="16" height="16" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none"><path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0M21 12c-2.4 4-5.4 6-9 6s-6.6-2-9-6c2.4-4 5.4-6 9-6s6.6 2 9 6" /></svg>
+            点击时执行的功能
+          </h5>
+          <div class="row">
+            <div class="col-12">
+              <label class="form-label mb-2" style="font-size: 0.85rem; color: #666;">关联功能</label>
+              <select class="form-select" style="font-size: 0.9rem; border-radius: 8px;" onchange="on_top_cmd_change(${ActiveTopIdx}, this.value)">
+                <option value="">请选择功能</option>
+                ${(() => { const list = Array.isArray(WeComCommands) ? [...WeComCommands] : []; const cur = top.cmd || top.key; if (cur && !list.find(c => c.id === cur)) { list.unshift({ id: cur, name: get_cmd_name(cur) || (top.name || cur) }); } return list.map(c => `<option value="${c.id}" ${cur === c.id ? 'selected' : ''}>${c.name}</option>`).join(''); })()}
+              </select>
+            </div>
+          </div>
+        </div>
+      `);
+      panel.append(clickSection);
+    } else {
+      // 容器类型 - 显示子菜单列表
+      const containerSection = $(`
+        <div>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0" style="font-size: 0.9rem; font-weight: 600; color: #333;">
+              <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-sm me-1" width="16" height="16" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none"><path d="M9 6l6 6l-6 6" /></svg>
+              子菜单列表 <span class="badge bg-secondary ms-2" style="font-size: 0.7rem;">${subs.length}/5</span>
+            </h5>
+            <button class="btn btn-sm" onclick="add_sub_button(${ActiveTopIdx})" 
+                    style="background: linear-gradient(135deg, #07C160 0%, #05a850 100%); color: white; border: none; font-weight: 500; padding: 0.4rem 0.8rem; border-radius: 6px;">
+              <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-sm" width="14" height="14" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none"><path d="M12 5v14m-7-7h14" /></svg>
+              添加子项
+            </button>
+          </div>
+          <div id="wecom_sub_list"></div>
+        </div>
+      `);
+      panel.append(containerSection);
+      
+      const subList = $("#wecom_sub_list");
+      if (subs.length === 0) {
+        subList.append(`
+          <div class="text-center py-4" style="background: #f8f9fa; border-radius: 8px;">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon text-muted mb-2" width="32" height="32" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none"><path d="M9 6l6 6l-6 6" /></svg>
+            <p class="text-muted mb-0" style="font-size: 0.85rem;">暂无子菜单<br><small>点击"添加子项"按钮创建</small></p>
+          </div>
+        `);
+      } else {
+        for (let j = 0; j < subs.length; j++) {
+          const sub = subs[j];
+          // 确保当前已选命令在选项中（即使命令列表中不存在）
+          const cmdList = Array.isArray(WeComCommands) ? [...WeComCommands] : [];
+          if (sub.cmd && !cmdList.find(c => c.id === sub.cmd)) {
+            cmdList.unshift({ id: sub.cmd, name: (sub.origin || sub.name || sub.cmd) });
+          }
+          const options = cmdList.map(c => `<option value="${c.id}" ${sub.cmd === c.id ? 'selected' : ''}>${c.name}</option>`).join('');
+          const desc = get_cmd_name(sub.cmd);
+          
+          const subCard = $(`
+            <div class="card mb-2 shadow-sm" style="border: 1px solid #e9ecef; border-radius: 8px; overflow: hidden;">
+              <div class="card-body p-3">
+                <div class="row g-2 align-items-center">
+                  <div class="col-md-5">
+                    <label class="form-label mb-1" style="font-size: 0.75rem; color: #999;">名称</label>
+                    <input type="text" class="form-control form-control-sm" 
+                           style="font-size: 0.85rem; border-radius: 6px;" 
+                           placeholder="如：下载转移" 
+                           value="${sub.name || ''}" 
+                           oninput="on_sub_name(${ActiveTopIdx}, ${j}, this.value)">
+                  </div>
+                  <div class="col-md-5">
+                    <label class="form-label mb-1" style="font-size: 0.75rem; color: #999;">功能</label>
+                    <select class="form-select form-select-sm" 
+                            style="font-size: 0.85rem; border-radius: 6px;" 
+                            onchange="on_sub_cmd(${ActiveTopIdx}, ${j}, this.value)">
+                      <option value="">选择</option>
+                      ${options}
+                    </select>
+                  </div>
+                  <div class="col-md-2 text-end">
+                    <label class="form-label mb-1" style="font-size: 0.75rem; color: transparent;">操作</label>
+                    <div class="btn-group btn-group-sm d-flex" role="group">
+                      <button class="btn btn-outline-secondary" onclick="move_sub(${ActiveTopIdx}, ${j}, -1)" title="上移" style="border-radius: 6px 0 0 6px; font-size: 0.75rem;">↑</button>
+                      <button class="btn btn-outline-secondary" onclick="move_sub(${ActiveTopIdx}, ${j}, 1)" title="下移" style="font-size: 0.75rem;">↓</button>
+                      <button class="btn btn-outline-danger" onclick="remove_sub_button(${ActiveTopIdx}, ${j})" title="删除" style="border-radius: 0 6px 6px 0; font-size: 0.75rem;">×</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `);
+          subList.append(subCard);
+        }
+      }
+    }
+  }
+
+  function get_cmd_name(id) {
+    const item = (WeComCommands || []).find(c => c.id === id);
+    return item ? item.name : '';
+  }
+
+  function select_top(i) {
+    ActiveTopIdx = i;
+    render_left_nav();
+    render_right_panel();
+  }
+
+  function on_top_type_change(i, type) {
+    WeComMenu.buttons[i].type = type;
+    if (type === 'click') {
+      // 切换到点击类型，清除子菜单，保留或初始化key
+      WeComMenu.buttons[i].sub_buttons = [];
+      if (!WeComMenu.buttons[i].key) {
+        WeComMenu.buttons[i].key = generate_key();
+      }
+    } else {
+      // 切换到容器类型，清除cmd/key
+      delete WeComMenu.buttons[i].cmd;
+      delete WeComMenu.buttons[i].key;
+      if (!WeComMenu.buttons[i].sub_buttons) {
+        WeComMenu.buttons[i].sub_buttons = [];
+      }
+    }
+    render_wecom_menu();
+  }
+  
+  function on_top_cmd_change(i, cmd) {
+    WeComMenu.buttons[i].cmd = cmd;
+    WeComMenu.buttons[i].key = cmd; // key 与 cmd 相同
+    render_right_panel();
+  }
+
+  function add_top_button() {
+    if (!WeComMenu.buttons) WeComMenu.buttons = [];
+    if (WeComMenu.buttons.length >= 3) {
+      show_warning_modal("一级菜单最多3个");
+      return;
+    }
+    WeComMenu.buttons.push({ name: "", type: "container", sub_buttons: [] });
+    ActiveTopIdx = WeComMenu.buttons.length - 1;
+    render_wecom_menu();
+  }
+
+  function remove_top_button(i) {
+    WeComMenu.buttons.splice(i, 1);
+    if (ActiveTopIdx >= WeComMenu.buttons.length) ActiveTopIdx = WeComMenu.buttons.length - 1;
+    if (ActiveTopIdx < 0) ActiveTopIdx = 0;
+    render_wecom_menu();
+  }
+
+  function move_top(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= WeComMenu.buttons.length) return;
+    const tmp = WeComMenu.buttons[i];
+    WeComMenu.buttons[i] = WeComMenu.buttons[j];
+    WeComMenu.buttons[j] = tmp;
+    ActiveTopIdx = j;
+    render_wecom_menu();
+  }
+
+  function add_sub_button(topIndex) {
+    const subs = WeComMenu.buttons[topIndex].sub_buttons || (WeComMenu.buttons[topIndex].sub_buttons = []);
+    if (subs.length >= 5) {
+      show_warning_modal("二级菜单最多5个");
+      return;
+    }
+    subs.push({ name: "", cmd: "", key: generate_key() });
+    render_right_panel();
+  }
+
+  function remove_sub_button(topIndex, subIndex) {
+    const subs = WeComMenu.buttons[topIndex].sub_buttons || [];
+    subs.splice(subIndex, 1);
+    render_right_panel();
+  }
+
+  function move_sub(topIndex, subIndex, dir) {
+    const subs = WeComMenu.buttons[topIndex].sub_buttons || [];
+    const j = subIndex + dir;
+    if (j < 0 || j >= subs.length) return;
+    const tmp = subs[subIndex];
+    subs[subIndex] = subs[j];
+    subs[j] = tmp;
+    render_right_panel();
+  }
+
+  function on_top_name(i, val) {
+    WeComMenu.buttons[i].name = val;
+  }
+  function on_sub_name(i, j, val) {
+    WeComMenu.buttons[i].sub_buttons[j].name = val;
+  }
+  function on_sub_cmd(i, j, val) {
+    WeComMenu.buttons[i].sub_buttons[j].cmd = val;
+    render_right_panel();
+  }
+
+  function generate_key() {
+    return "k" + Date.now() + Math.floor(Math.random() * 1000);
+  }
+
+  function validate_menu() {
+    const buttons = WeComMenu.buttons || [];
+    if (buttons.length === 0) {
+      show_warning_modal("请添加至少一个菜单");
+      return false;
+    }
+    for (let i = 0; i < buttons.length; i++) {
+      const b = buttons[i];
+      const menuType = b.type || 'container';
+      
+      if (!b.name || !b.name.trim()) {
+        show_warning_modal(`第${i+1}个菜单名称不能为空`);
+        return false;
+      }
+      
+      if (menuType === 'click') {
+        // 点击类型验证
+        if (!b.cmd && !b.key) {
+          show_warning_modal(`菜单"${b.name}"未选择关联功能`);
+          return false;
+        }
+        if (!b.key) {
+          b.key = b.cmd || generate_key();
+        }
+      } else {
+        // 容器类型验证
+        const subs = b.sub_buttons || [];
+        if (subs.length === 0) {
+          show_warning_modal(`菜单"${b.name}"至少需要一个子菜单项`);
+          return false;
+        }
+        for (let j = 0; j < subs.length; j++) {
+          const s = subs[j];
+          if (!s.name || !s.name.trim()) {
+            show_warning_modal(`"${b.name}"的第${j+1}个子菜单名称不能为空`);
+            return false;
+          }
+          if (!s.cmd) {
+            show_warning_modal(`"${b.name}"的第${j+1}个子菜单未选择功能`);
+            return false;
+          }
+          if (!s.key) {
+            s.key = generate_key();
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  function save_wecom_menu() {
+    if (!validate_menu()) return;
+    ajax_post("set_wecom_menu", { menu: JSON.stringify(WeComMenu) }, function (ret) {
+      if (ret.code === 0) {
+        show_success_modal("菜单已保存");
+      }
+    });
+  }
+
+  function reset_wecom_menu() {
+    ajax_post("reset_wecom_menu", {}, function (ret) {
+      if (ret.code === 0) {
+        WeComMenu = ret.menu || { buttons: [] };
+        render_wecom_menu();
+        show_success_modal("已重置为默认");
+      }
+    });
+  }
+
+  function publish_wecom_menu() {
+    if (!validate_menu()) return;
+    // 先保存，再发布
+    ajax_post("set_wecom_menu", { menu: JSON.stringify(WeComMenu) }, function () {
+      ajax_post("publish_wecom_menu", {}, function (ret) {
+        if (ret.code === 0) {
+          show_success_modal("发布成功");
+        } else {
+          show_warning_modal(ret.msg || "发布失败");
+        }
+      });
+    });
+  }
+
+  function delete_wechat_menu() {
+    ajax_post("delete_wechat_menu", {}, function (ret) {
+      if (ret.code === 0) {
+        show_success_modal("远端菜单已删除");
+      } else {
+        show_warning_modal(ret.msg || "删除失败");
+      }
+    });
+  }
+
+  function get_wechat_menu_remote() {
+    ajax_post("get_wechat_menu_remote", {}, function (ret) {
+      if (ret.code === 0) {
+        const data = ret.data || {};
+        $("#remote_wecom_menu_pre").text(JSON.stringify(data, null, 2));
+        $("#modal-remote-wecom-menu").modal("show");
+      } else {
+        show_warning_modal(ret.msg || "获取失败");
+      }
+    });
+  }
+
+  function show_wecom_menu_modal() {
+    $("#modal-wecom-menu").modal("show");
+    // 延迟以确保modal渲染完成
+    setTimeout(function(){ load_wecom_menu(); }, 0);
+  }
+
+  $(function () {
+    // lazy-load when open settings modal
+  });
+</script>
+{% endif %}

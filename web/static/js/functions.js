@@ -31,8 +31,307 @@ let WSProtocol = "ws://";
 if (window.location.protocol === "https:") {
   WSProtocol = "wss://"
 }
+
+function terminal_http_enqueue_input(d) {
+  try {
+    if (!TerminalHttpMode || !TerminalHttpId) return;
+    TerminalInputQueue.push(d || "");
+    if (!TerminalInputSending) {
+      terminal_http_drain_queue();
+    }
+  } catch (e) {}
+}
+
+function terminal_http_drain_queue() {
+  try {
+    if (TerminalInputSending) return;
+    TerminalInputSending = true;
+    const sendNext = () => {
+      if (!TerminalHttpMode || !TerminalHttpId) {
+        TerminalInputSending = false;
+        TerminalInputQueue = [];
+        return;
+      }
+      if (!TerminalInputQueue || TerminalInputQueue.length === 0) {
+        TerminalInputSending = false;
+        return;
+      }
+      // 轻量合并：在不包含换行的情况下合并少量连续按键，减少请求数同时保持实时感
+      let payload = String(TerminalInputQueue.shift() || "");
+      if (payload.indexOf('\r') === -1 && payload.indexOf('\n') === -1) {
+        while (TerminalInputQueue.length > 0 && payload.length < 96) {
+          const peek = String(TerminalInputQueue[0] || "");
+          if (peek.indexOf('\r') !== -1 || peek.indexOf('\n') !== -1) break;
+          payload += TerminalInputQueue.shift();
+        }
+      }
+      api_terminal_input(TerminalHttpId, payload)
+        .catch(() => {})
+        .finally(() => {
+          if (TerminalInputQueue.length > 0) {
+            // 继续发送下一条，保持顺序
+            setTimeout(sendNext, 0);
+          } else {
+            TerminalInputSending = false;
+          }
+        });
+    };
+    sendNext();
+  } catch (e) {}
+}
+
+let TerminalInputBuf = "";
+let TerminalInputTimer;
+let TerminalInputBusy = false;
+let TerminalInputQueue = [];
+let TerminalInputSending = false;
+let TerminalHttpOrderInputs = false;
+let TerminalSSEStarting = false;
+function terminal_http_flush_input() {
+  try {
+    if (!TerminalHttpMode || !TerminalHttpId) { TerminalInputBuf = ""; return; }
+    if (TerminalInputBusy) return;
+    const data = TerminalInputBuf;
+    if (!data || data.length === 0) return;
+    TerminalInputBuf = "";
+    TerminalInputBusy = true;
+    api_terminal_input(TerminalHttpId, data).catch(()=>{}).finally(()=>{
+      TerminalInputBusy = false;
+      if (TerminalInputBuf && TerminalInputBuf.length > 0) {
+        terminal_http_flush_input();
+      }
+    });
+  } catch (e) {}
+}
+function terminal_http_buffer_input(d) {
+  try {
+    if (!TerminalHttpMode || !TerminalHttpId) return;
+    TerminalInputBuf = (TerminalInputBuf || "") + (d || "");
+    // 回车/换行立即刷新，降低感知延迟
+    if (d && (d.indexOf('\r') !== -1 || d.indexOf('\n') !== -1)) {
+      if (TerminalInputTimer) { try { clearTimeout(TerminalInputTimer); } catch(e){} TerminalInputTimer = undefined; }
+      terminal_http_flush_input();
+      return;
+    }
+    if (TerminalInputBuf.length >= 128) {
+      if (TerminalInputTimer) { try { clearTimeout(TerminalInputTimer); } catch(e){} TerminalInputTimer = undefined; }
+      terminal_http_flush_input();
+      return;
+    }
+    if (!TerminalInputTimer) {
+      TerminalInputTimer = setTimeout(function(){
+        TerminalInputTimer = undefined;
+        terminal_http_flush_input();
+      }, 10);
+    }
+  } catch (e) {}
+}
+
+function schedule_ws_fallback(delayMs) {
+  if (!TerminalActive || TerminalHttpMode) return;
+  try { if (TerminalWSTimer) clearTimeout(TerminalWSTimer); } catch (e) {}
+  TerminalWSTimer = setTimeout(() => {
+    if (!TerminalActive || TerminalHttpMode) return;
+    if (!TerminalWSConnected) {
+      try { TerminalWS && TerminalWS.close(); } catch (e) {}
+      TerminalWS = undefined;
+      // 先尝试 SSE，再退回长轮询
+      start_terminal_sse_fallback();
+    }
+  }, Math.max(0, delayMs || WS_FALLBACK_FIRST_MS));
+}
+
+// 初始化 statistics 页面自动刷新（优先 WebSocket，失败回退轮询）
+function init_statistics_autoreload() {
+  // 清理旧定时器
+  if (StatisticsAutoReloadTimer) {
+    clearInterval(StatisticsAutoReloadTimer);
+    StatisticsAutoReloadTimer = undefined;
+  }
+  // 关闭旧 WebSocket
+  if (StatisticsWS) {
+    try { StatisticsWS.close(); } catch (e) {}
+    StatisticsWS = undefined;
+  }
+  // 关闭旧 SSE
+  if (StatisticsES) {
+    try { StatisticsES.close(); } catch (e) {}
+    StatisticsES = undefined;
+  }
+  const el = document.getElementById('statistics-auto-reload');
+  if (!el) {
+    return;
+  }
+  const isUpdating = el.getAttribute('data-is-updating') === '1';
+  const refreshTriggered = el.getAttribute('data-refresh-triggered') === '1';
+  const lastUpdateTime = el.getAttribute('data-last-update-time') || '';
+  let seenUpdating = false;
+  if (!(isUpdating || refreshTriggered)) {
+    return;
+  }
+
+  // 优先使用 WebSocket
+  try {
+    const wsUrl = WSProtocol + window.location.host + '/ws-statistics';
+    StatisticsWS = new WebSocket(wsUrl);
+    StatisticsWS.onmessage = function (event) {
+      try {
+        const ret = JSON.parse(event.data || '{}');
+        if (!ret || ret.code !== 0) return;
+        if (ret.is_updating) {
+          seenUpdating = true;
+          return;
+        }
+        // 刷新已结束
+        if (!ret.is_updating) {
+          if (refreshTriggered) {
+            if (!seenUpdating && lastUpdateTime && ret.last_update_time === lastUpdateTime) return;
+            try { StatisticsWS.close(); } catch (e) {}
+            StatisticsWS = undefined;
+            if (typeof navmenu === 'function') navmenu('statistics');
+            return;
+          }
+          if (seenUpdating || !lastUpdateTime || (ret.last_update_time && ret.last_update_time !== lastUpdateTime)) {
+            try { StatisticsWS.close(); } catch (e) {}
+            StatisticsWS = undefined;
+            if (typeof navmenu === 'function') navmenu('statistics');
+            return;
+          }
+        }
+      } catch (e) {}
+    };
+    StatisticsWS.onerror = function () {
+      // WS 异常，回退轮询
+      try { StatisticsWS.close(); } catch (e) {}
+      StatisticsWS = undefined;
+      if (document.getElementById('statistics-auto-reload')) {
+        if (window.EventSource) {
+          start_statistics_sse(refreshTriggered, lastUpdateTime);
+        } else {
+          start_statistics_polling(refreshTriggered, lastUpdateTime);
+        }
+      }
+    };
+    StatisticsWS.onclose = function () {
+      // 连接关闭且还在统计页时，回退轮询
+      if (!StatisticsAutoReloadTimer && document.getElementById('statistics-auto-reload')) {
+        if (window.EventSource) {
+          start_statistics_sse(refreshTriggered, lastUpdateTime);
+        } else {
+          start_statistics_polling(refreshTriggered, lastUpdateTime);
+        }
+      }
+    }
+    return; // WS 启动成功则不启动轮询
+  } catch (e) {
+    // ignore and fallback
+  }
+
+  // 回退到轮询
+  if (window.EventSource) {
+    start_statistics_sse(refreshTriggered, lastUpdateTime);
+  } else {
+    start_statistics_polling(refreshTriggered, lastUpdateTime);
+  }
+}
+
+function start_statistics_polling(refreshTriggered, lastUpdateTime) {
+  let seenUpdating = false;
+  StatisticsAutoReloadTimer = setInterval(function () {
+    $.getJSON('/statistics/status', { _: Date.now() }, function (ret) {
+      if (ret && ret.code === 0) {
+        if (ret.is_updating) {
+          seenUpdating = true;
+          return;
+        }
+        // 刷新已结束
+        if (!ret.is_updating) {
+          if (refreshTriggered) {
+            if (!seenUpdating && lastUpdateTime && ret.last_update_time === lastUpdateTime) return;
+            clearInterval(StatisticsAutoReloadTimer);
+            StatisticsAutoReloadTimer = undefined;
+            if (typeof navmenu === 'function') navmenu('statistics');
+            return;
+          }
+          if (seenUpdating || !lastUpdateTime || (ret.last_update_time && ret.last_update_time !== lastUpdateTime)) {
+            clearInterval(StatisticsAutoReloadTimer);
+            StatisticsAutoReloadTimer = undefined;
+            if (typeof navmenu === 'function') navmenu('statistics');
+            return;
+          }
+        }
+      }
+    });
+  }, 2000);
+}
+
+function start_statistics_sse(refreshTriggered, lastUpdateTime) {
+  let seenUpdating = false;
+  // 清理轮询
+  if (StatisticsAutoReloadTimer) {
+    clearInterval(StatisticsAutoReloadTimer);
+    StatisticsAutoReloadTimer = undefined;
+  }
+  // 关闭旧 SSE
+  if (StatisticsES) {
+    try { StatisticsES.close(); } catch (e) {}
+    StatisticsES = undefined;
+  }
+  try {
+    StatisticsES = new EventSource('/stream-statistics');
+    StatisticsES.onmessage = function (event) {
+      try {
+        const ret = JSON.parse(event.data || '{}');
+        if (!ret || ret.code !== 0) return;
+        if (ret.is_updating) {
+          seenUpdating = true;
+          return;
+        }
+        if (!ret.is_updating) {
+          if (refreshTriggered) {
+            if (!seenUpdating && lastUpdateTime && ret.last_update_time === lastUpdateTime) return;
+            try { StatisticsES.close(); } catch (e) {}
+            StatisticsES = undefined;
+            if (typeof navmenu === 'function') navmenu('statistics');
+            return;
+          }
+          if (seenUpdating || !lastUpdateTime || (ret.last_update_time && ret.last_update_time !== lastUpdateTime)) {
+            try { StatisticsES.close(); } catch (e) {}
+            StatisticsES = undefined;
+            if (typeof navmenu === 'function') navmenu('statistics');
+            return;
+          }
+        }
+      } catch (e) {}
+    };
+    StatisticsES.onerror = function () {
+      // SSE 异常，回退轮询（仍在统计页才回退）
+      try { StatisticsES.close(); } catch (e) {}
+      StatisticsES = undefined;
+      if (document.getElementById('statistics-auto-reload')) {
+        start_statistics_polling(refreshTriggered, lastUpdateTime);
+      }
+    };
+  } catch (e) {
+    // Fallback directly to polling
+    start_statistics_polling(refreshTriggered, lastUpdateTime);
+  }
+}
+
+// 初次页面加载也初始化（非 navmenu 异步渲染场景）
+try {
+  $(function () { init_statistics_autoreload(); });
+} catch (e) {
+  try { document.addEventListener('DOMContentLoaded', init_statistics_autoreload); } catch (e2) {}
+}
 // 页面加载的时间
 let PageLoadedTime = new Date();
+// statistics page auto-reload timer
+let StatisticsAutoReloadTimer;
+// statistics page WebSocket
+let StatisticsWS;
+// statistics page SSE
+let StatisticsES;
 
 
 /**
@@ -55,6 +354,21 @@ function navmenu(page, newflag = false) {
   $(window).unbind('scroll');
   // 显示进度条
   NProgress.start();
+  // clear statistics auto-reload timer when navigating
+  if (StatisticsAutoReloadTimer) {
+    clearInterval(StatisticsAutoReloadTimer);
+    StatisticsAutoReloadTimer = undefined;
+  }
+  // close statistics WebSocket when navigating
+  if (StatisticsWS) {
+    try { StatisticsWS.close(); } catch (e) {}
+    StatisticsWS = undefined;
+  }
+  // close statistics SSE when navigating
+  if (StatisticsES) {
+    try { StatisticsES.close(); } catch (e) {}
+    StatisticsES = undefined;
+  }
   // 停止上一次加载
   if (NavPageXhr && NavPageLoading) {
     NavPageXhr.abort();
@@ -85,6 +399,8 @@ function navmenu(page, newflag = false) {
         fresh_tooltip();
         // 刷新filetree控件
         init_filetree_element();
+        // 初始化 statistics 页面自动刷新
+        init_statistics_autoreload();
       }
       if (page !== CurrentPageUri) {
         // 切换页面时滚动到顶部
@@ -1876,4 +2192,450 @@ function send_web_message(obj) {
 function init_dropzone() {
   TorrentDropZone = new Dropzone("#torrent_files");
   TorrentDropZone.options.acceptedFiles = ".torrent";
+}
+
+// =====================
+// 命令终端（xterm + WebSocket）
+// =====================
+let TerminalWS;
+let TerminalTerm;
+let TerminalFit;
+let TerminalContainer;
+let TerminalHttpMode = false;
+let TerminalHttpId = undefined;
+let TerminalPollTimer = undefined;
+let TerminalHttpAbort = undefined;
+let TerminalHttpPolling = false;
+let TerminalActive = false;
+let TerminalWSConnected = false;
+let TerminalWSTimer = undefined;
+const WS_FALLBACK_FIRST_MS = 4000;   // 首次连接等待窗口
+const WS_FALLBACK_RECONNECT_MS = 5000; // 断线重连等待窗口
+let TerminalSSE = undefined;
+let TerminalSSEActive = false;
+
+function loadCssOnce(href) {
+  return new Promise((resolve, reject) => {
+    // 如果已存在同href样式，直接完成
+    const exists = Array.from(document.styleSheets).some(ss => ss.href && ss.href.indexOf(href) !== -1);
+    if (exists) return resolve();
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.onload = () => resolve();
+    link.onerror = () => reject(new Error('css load failed'));
+    document.head.appendChild(link);
+  });
+}
+
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    // 如果已存在同src脚本，直接完成
+    const exists = Array.from(document.scripts).some(s => s.src && s.src.indexOf(src) !== -1);
+    if (exists) return resolve();
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = false;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('script load failed'));
+    document.head.appendChild(s);
+  });
+}
+
+async function ensure_xterm_assets() {
+  if (window.Terminal && window.FitAddon) return true;
+  // 先尝试本地资源
+  try {
+    await loadCssOnce('../static/vendor/xterm/xterm.css');
+  } catch (e) { /* ignore */ }
+  try {
+    if (!window.Terminal) await loadScriptOnce('../static/vendor/xterm/xterm.min.js');
+    if (!window.FitAddon) await loadScriptOnce('../static/vendor/xterm/xterm-addon-fit.min.js');
+  } catch (e) { /* ignore */ }
+  if (window.Terminal && window.FitAddon) return true;
+  // 回退到 CDN
+  try {
+    await loadCssOnce('https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css');
+  } catch (e) { /* ignore */ }
+  try {
+    if (!window.Terminal) await loadScriptOnce('https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js');
+    if (!window.FitAddon) await loadScriptOnce('https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.min.js');
+  } catch (e) { /* ignore */ }
+  return !!(window.Terminal && window.FitAddon);
+}
+
+function show_terminal_modal() {
+  // 绑定事件（先绑定，再决定何时显示）
+  $("#modal-terminal").off('shown.bs.modal').on('shown.bs.modal', function () {
+    TerminalActive = true;
+    start_terminal();
+  });
+  $("#modal-terminal").off('hidden.bs.modal').on('hidden.bs.modal', function () {
+    stop_terminal();
+  });
+  // 兼容部分情况下只触发 hide 不触发 hidden 的场景
+  $("#modal-terminal").off('hide.bs.modal').on('hide.bs.modal', function () {
+    stop_terminal();
+  });
+  // 确保资产，避免重复 show 导致的二次初始化
+  if (!window.Terminal) {
+    ensure_xterm_assets().then(ok => {
+      if (!ok) {
+        show_fail_modal("xterm 未加载，请检查网络或CDN");
+        return;
+      }
+      $("#modal-terminal").modal('show');
+    });
+  } else {
+    $("#modal-terminal").modal('show');
+  }
+}
+
+function start_terminal() {
+  try {
+    TerminalActive = true;
+    // 防重入：已初始化则不再重复启动
+    if (typeof TerminalTerm !== 'undefined' && TerminalTerm) return;
+    TerminalContainer = document.getElementById('terminal_container');
+    if (!TerminalContainer) return;
+    // 实例化终端
+    TerminalTerm = new window.Terminal({
+      cursorBlink: true,
+      scrollback: 1000,
+      fontFamily: 'monospace',
+      theme: { background: '#000000' }
+    });
+    if (window.FitAddon && window.FitAddon.FitAddon) {
+      TerminalFit = new window.FitAddon.FitAddon();
+      TerminalTerm.loadAddon(TerminalFit);
+    }
+    TerminalTerm.open(TerminalContainer);
+    if (TerminalFit) { TerminalFit.fit(); }
+    // 清理旧状态
+    TerminalWSConnected = false;
+    if (TerminalWSTimer) { try { clearTimeout(TerminalWSTimer); } catch(e){} TerminalWSTimer = undefined; }
+    // 建立 WebSocket 连接（仅尝试一次）
+    const wsUrl = WSProtocol + window.location.host + '/ws-terminal';
+    TerminalWS = new WebSocket(wsUrl);
+    // 明确二进制帧处理方式，统一按 ArrayBuffer 接收
+    try { TerminalWS.binaryType = 'arraybuffer'; } catch(e) {}
+    TerminalWS.onopen = function () {
+      try { TerminalWS.binaryType = 'arraybuffer'; } catch(e) {}
+      TerminalWSConnected = true;
+      if (TerminalWSTimer) { try { clearTimeout(TerminalWSTimer); } catch(e){} TerminalWSTimer = undefined; }
+      // 同步窗口尺寸
+      resize_terminal();
+    };
+    TerminalWS.onmessage = function (event) {
+      const payload = event.data;
+      const writeText = (text) => {
+        if (typeof text !== 'string') { text = String(text || ''); }
+        // 尝试解析错误信息
+        if (text.length > 0 && text[0] === '{') {
+          try {
+            const ret = JSON.parse(text);
+            if (ret && typeof ret.code !== 'undefined' && ret.code < 0) {
+              show_fail_modal(`终端不可用：${ret.msg || '错误'}`);
+              $("#modal-terminal").modal('hide');
+              return;
+            }
+          } catch (e) {
+            // 非JSON，按输出渲染
+          }
+        }
+        try { TerminalTerm.write(text); } catch (e) {}
+      };
+
+      if (typeof payload === 'string') {
+        writeText(payload);
+      } else if (payload instanceof ArrayBuffer) {
+        try {
+          const dec = (typeof TextDecoder !== 'undefined') ? new TextDecoder('utf-8') : null;
+          const text = dec ? dec.decode(new Uint8Array(payload)) : String(payload);
+          writeText(text);
+        } catch (e) {
+          writeText('');
+        }
+      } else if (payload && typeof payload.arrayBuffer === 'function') { // Blob
+        payload.arrayBuffer().then(buf => {
+          try {
+            const dec = (typeof TextDecoder !== 'undefined') ? new TextDecoder('utf-8') : null;
+            const text = dec ? dec.decode(new Uint8Array(buf)) : String(buf);
+            writeText(text);
+          } catch (e) {
+            writeText('');
+          }
+        }).catch(() => writeText(''));
+      } else {
+        writeText(payload);
+      }
+    };
+    TerminalWS.onerror = function () {
+      if (!TerminalActive || TerminalHttpMode) return;
+      TerminalWSConnected = false;
+      try { TerminalWS && TerminalWS.close(); } catch (e) {}
+      TerminalWS = undefined;
+      // 失败立即回退到 SSE（仅一次）
+      ensure_terminal_sse_once();
+    };
+    TerminalWS.onclose = function () {
+      if (!TerminalActive || TerminalHttpMode) return;
+      TerminalWSConnected = false;
+      try { TerminalWS && TerminalWS.close(); } catch (e) {}
+      TerminalWS = undefined;
+      // 关闭后立即回退到 SSE（不再重试 WS，且仅一次）
+      ensure_terminal_sse_once();
+    };
+    // 键盘输入
+    TerminalTerm.onData(function (data) {
+      if (TerminalHttpMode) {
+        if (TerminalHttpOrderInputs) {
+          terminal_http_enqueue_input(data);
+        } else {
+          api_terminal_input(TerminalHttpId, data).catch(()=>{});
+        }
+      } else {
+        try { TerminalWS && TerminalWS.send(JSON.stringify({ type: 'input', data: data })); } catch (e) {}
+      }
+    });
+    // 窗口变化
+    window.addEventListener('resize', resize_terminal);
+    // 聚焦
+    setTimeout(function(){ try { TerminalTerm && TerminalTerm.focus(); } catch(e){} }, 50);
+  } catch (e) {}
+}
+
+function resize_terminal() {
+  try {
+    if (TerminalFit && TerminalTerm) {
+      TerminalFit.fit();
+      const cols = TerminalTerm.cols || 80;
+      const rows = TerminalTerm.rows || 24;
+      if (TerminalHttpMode) {
+        api_terminal_resize(TerminalHttpId, cols, rows).catch(()=>{});
+      } else if (TerminalWS && TerminalWS.readyState === 1) {
+        TerminalWS.send(JSON.stringify({ type: 'resize', cols: cols, rows: rows }));
+      }
+    }
+  } catch (e) {}
+}
+
+function stop_terminal() {
+  try {
+    TerminalActive = false;
+    window.removeEventListener('resize', resize_terminal);
+    if (TerminalHttpMode) {
+      if (TerminalPollTimer) { clearInterval(TerminalPollTimer); TerminalPollTimer = undefined; }
+      try { if (TerminalHttpAbort && TerminalHttpAbort.abort) TerminalHttpAbort.abort(); } catch(e){}
+      TerminalHttpAbort = undefined;
+      TerminalHttpPolling = false;
+      try { if (TerminalSSE) { TerminalSSE.close(); } } catch(e){}
+      TerminalSSE = undefined;
+      TerminalSSEActive = false;
+      if (TerminalHttpId) { api_terminal_stop(TerminalHttpId).catch(()=>{}); }
+      TerminalHttpMode = false;
+      TerminalHttpId = undefined;
+    } else {
+      try { TerminalWS && TerminalWS.send(JSON.stringify({ type: 'exit' })); } catch (e) {}
+      try { TerminalWS && TerminalWS.close(); } catch (e) {}
+      TerminalWS = undefined;
+    }
+    if (TerminalWSTimer) { try { clearTimeout(TerminalWSTimer); } catch(e){} TerminalWSTimer = undefined; }
+    if (TerminalInputTimer) { try { clearTimeout(TerminalInputTimer); } catch(e){} TerminalInputTimer = undefined; }
+    TerminalInputBuf = "";
+    TerminalInputBusy = false;
+    TerminalInputQueue = [];
+    TerminalInputSending = false;
+    try { TerminalTerm && TerminalTerm.dispose && TerminalTerm.dispose(); } catch (e) {}
+    TerminalTerm = undefined;
+    TerminalFit = undefined;
+    TerminalContainer = undefined;
+  } catch (e) {}
+}
+
+// ============ HTTP回退实现 ============
+function postJSON(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(body || {})
+  }).then(r => r.json());
+}
+
+function postJSONAbortable(url, body, controller) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(body || {}),
+    signal: controller && controller.signal
+  }).then(r => r.json());
+}
+
+function api_terminal_start(cols, rows) {
+  return postJSON('api/terminal/start', { cols, rows });
+}
+function api_terminal_input(id, data) {
+  return postJSON('api/terminal/input', { id, data });
+}
+function api_terminal_resize(id, cols, rows) {
+  return postJSON('api/terminal/resize', { id, cols, rows });
+}
+function api_terminal_stop(id) {
+  return postJSON('api/terminal/stop', { id });
+}
+function api_terminal_poll(id) {
+  return postJSON('api/terminal/poll', { id });
+}
+
+function start_terminal_http_fallback() {
+  if (TerminalHttpMode) return; // 已回退
+  try {
+    if (!(TerminalFit && TerminalTerm)) return;
+    // 取当前尺寸
+    const cols = TerminalTerm.cols || 80;
+    const rows = TerminalTerm.rows || 24;
+    api_terminal_start(cols, rows).then(ret => {
+      if (!ret || ret.code !== 0) {
+        show_fail_modal(`终端连接失败`);
+        $("#modal-terminal").modal('hide');
+        return;
+      }
+      TerminalHttpMode = true;
+      TerminalHttpId = ret.id;
+      TerminalHttpPolling = true;
+      // 启动长轮询：前一次返回后再发下一次，避免并发/狂刷
+      const pollOnce = () => {
+        if (!TerminalHttpMode || !TerminalHttpPolling) return;
+        try { if (TerminalHttpAbort && TerminalHttpAbort.abort) TerminalHttpAbort.abort(); } catch(e){}
+        TerminalHttpAbort = (typeof AbortController !== 'undefined') ? new AbortController() : undefined;
+        postJSONAbortable('api/terminal/poll', { id: TerminalHttpId, wait: 20 }, TerminalHttpAbort).then(p => {
+          if (!p) return;
+          if (typeof p.data === 'string' && p.data.length > 0) {
+            try { TerminalTerm && TerminalTerm.write(p.data); } catch (e) {}
+          }
+          if (p.alive === false) {
+            TerminalHttpPolling = false;
+            return;
+          }
+          // 继续下一次长轮询
+          if (TerminalHttpMode && TerminalHttpPolling) {
+            pollOnce();
+          }
+        }).catch((err) => {
+          // 若是主动中止则不再继续
+          if (err && (err.name === 'AbortError' || err.code === 20)) return;
+          // 短暂退避再试
+          setTimeout(() => { if (TerminalHttpMode && TerminalHttpPolling) pollOnce(); }, 500);
+        });
+      };
+      pollOnce();
+    }).catch(() => {
+      show_fail_modal('终端连接失败');
+      $("#modal-terminal").modal('hide');
+    });
+  } catch (e) {
+    show_fail_modal('终端连接失败');
+    $("#modal-terminal").modal('hide');
+  }
+}
+
+// ============ SSE回退实现（优先于长轮询） ============
+function ensure_terminal_sse_once() {
+  try {
+    if (TerminalSSEStarting || TerminalHttpMode || TerminalSSEActive) return;
+    TerminalSSEStarting = true;
+    start_terminal_sse_fallback();
+  } catch (e) {}
+}
+
+function start_terminal_sse_fallback() {
+  try {
+    if (!(TerminalFit && TerminalTerm)) return;
+    const proceed = (id) => {
+      TerminalHttpMode = true; // 输入/resize 走HTTP
+      TerminalHttpId = id;
+      TerminalSSEActive = true;
+      TerminalSSEStarting = false;
+      try { if (TerminalSSE) TerminalSSE.close(); } catch(e){}
+      TerminalSSE = new EventSource(`api/terminal/stream?id=${encodeURIComponent(TerminalHttpId)}`);
+      TerminalSSE.onmessage = function (ev) {
+        try {
+          const msg = JSON.parse(ev.data || '{}');
+          if (msg && typeof msg.code !== 'undefined' && msg.code < 0) {
+            show_fail_modal(`终端不可用：${msg.msg || '错误'}`);
+            $("#modal-terminal").modal('hide');
+            return;
+          }
+          if (typeof msg.data === 'string' && msg.data.length > 0) {
+            try { TerminalTerm && TerminalTerm.write(msg.data); } catch (e) {}
+          }
+          if (msg.alive === false) {
+            TerminalSSEActive = false;
+            try { TerminalSSE && TerminalSSE.close(); } catch(e){}
+          }
+        } catch (e) {}
+      };
+      TerminalSSE.onerror = function () {
+        // SSE 不可用，退回长轮询
+        TerminalSSEActive = false;
+        try { TerminalSSE && TerminalSSE.close(); } catch(e){}
+        // 使用已有的 id 直接开启长轮询
+        start_terminal_http_polling();
+      };
+    };
+    if (!TerminalHttpId) {
+      const cols = TerminalTerm.cols || 80;
+      const rows = TerminalTerm.rows || 24;
+      api_terminal_start(cols, rows).then(ret => {
+        if (!ret || ret.code !== 0) {
+          show_fail_modal(`终端连接失败`);
+          $("#modal-terminal").modal('hide');
+          TerminalSSEStarting = false;
+          return;
+        }
+        proceed(ret.id);
+      }).catch(() => {
+        show_fail_modal('终端连接失败');
+        $("#modal-terminal").modal('hide');
+        TerminalSSEStarting = false;
+      });
+    } else {
+      proceed(TerminalHttpId);
+    }
+  } catch (e) {
+    show_fail_modal('终端连接失败');
+    $("#modal-terminal").modal('hide');
+    TerminalSSEStarting = false;
+  }
+}
+
+// 仅用于 SSE 失败后，基于已存在的 id 开启长轮询，不再重复 start
+function start_terminal_http_polling() {
+  if (!TerminalHttpId) return;
+  TerminalHttpMode = true;
+  TerminalHttpPolling = true;
+  const pollOnce = () => {
+    if (!TerminalHttpMode || !TerminalHttpPolling) return;
+    try { if (TerminalHttpAbort && TerminalHttpAbort.abort) TerminalHttpAbort.abort(); } catch(e){}
+    TerminalHttpAbort = (typeof AbortController !== 'undefined') ? new AbortController() : undefined;
+    postJSONAbortable('api/terminal/poll', { id: TerminalHttpId, wait: 20 }, TerminalHttpAbort).then(p => {
+      if (!p) return;
+      if (typeof p.data === 'string' && p.data.length > 0) {
+        try { TerminalTerm && TerminalTerm.write(p.data); } catch (e) {}
+      }
+      if (p.alive === false) {
+        TerminalHttpPolling = false;
+        return;
+      }
+      if (TerminalHttpMode && TerminalHttpPolling) {
+        pollOnce();
+      }
+    }).catch((err) => {
+      if (err && (err.name === 'AbortError' || err.code === 20)) return;
+      setTimeout(() => { if (TerminalHttpMode && TerminalHttpPolling) pollOnce(); }, 500);
+    });
+  };
+  pollOnce();
 }

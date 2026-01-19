@@ -110,6 +110,7 @@ class Config(object):
         if not os.environ.get('TZ'):
             os.environ['TZ'] = 'Asia/Shanghai'
         self.init_syspath()
+        self.init_patches()
         self.init_config()
 
     def init_config(self):
@@ -144,6 +145,18 @@ class Config(object):
                                            third_party_lib.strip()).replace("\\", "/")
                 if module_path not in sys.path:
                     sys.path.append(module_path)
+    
+    def init_patches(self):
+        """
+        初始化并应用第三方库的补丁
+        必须在 init_syspath() 之后调用，确保第三方库路径已加载
+        """
+        try:
+            # 应用 feapder TailThread 卡死修复补丁
+            from app.utils.feapder_patch import apply_feapder_patches
+            apply_feapder_patches()
+        except Exception:
+            pass
 
     @property
     def current_user(self):

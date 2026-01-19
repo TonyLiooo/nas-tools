@@ -67,12 +67,12 @@
           <a class="card card-link-pop rounded-3 overflow-hidden library-{{ Library.id }}" href="{{ theLibLink }}" target="_blank">
           {% if Library.image %}
             <custom-img img-class="w-100"
-                        img-src="{{ Library.image }}"
+                        img-src="/img?url={{ Library.image|urlencode }}"
                         img-ratio="50%"
                         img-style="object-fit: cover;"
             ></custom-img>
           {% else %}
-            <custom-plex-library-img img-src-list='{{ Library.image_list }}'></custom-plex-library-img>
+            <custom-plex-library-img img-src-list='{{ Library.image_list|tojson|safe }}'></custom-plex-library-img>
           {% endif %}
             <div class="m-2 text-center">
               {{ Library.name }}
@@ -112,7 +112,7 @@
         {% endif %}
       <a class="card card-link-pop rounded-3 overflow-hidden resume-{{ Resume.id }}" href="{{ theLibLink }}" target="_blank">
         <custom-img img-class="w-100"
-                    img-src="{{ Resume.image }}"
+                    img-src="/img?url={{ Resume.image|urlencode }}"
                     img-ratio="50%"
                     img-style="object-fit: cover;"
         ></custom-img>
@@ -163,7 +163,7 @@
         {% endif %}
       <a class="card card-link-pop overflow-hidden rounded-3 latest-{{ Latest.id }}" href="{{ theLibLink }}" target="_blank">
         <custom-img img-class="w-100"
-                    img-src="{{ Latest.image }}"
+                    img-src="/img?url={{ Latest.image|urlencode }}"
                     img-ratio="150%"
                     img-style="object-fit: cover;"
         ></custom-img>

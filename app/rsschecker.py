@@ -227,6 +227,7 @@ class RssChecker(object):
 
                 task_type = taskinfo.get("uses")
                 meta_name = "%s %s" % (title, year) if year else title
+                description = res.get('description', '')
                 # 检查是否已处理过
                 if self.is_article_processed(task_type, title, year, enclosure):
                     log.info("【RssChecker】%s 已处理过" % title)
@@ -235,6 +236,7 @@ class RssChecker(object):
                 if task_type == "D":
                     # 识别种子名称，开始搜索TMDB
                     media_info = MetaInfo(title=meta_name,
+                                          subtitle=description,
                                           mtype=mediatype)
                     cache_info = self.media.get_cache_info(media_info)
                     if taskinfo.get("recognization") == "Y":
@@ -246,6 +248,7 @@ class RssChecker(object):
                             media_info.year = cache_info.get("year")
                         else:
                             media_info = self.media.get_media_info(title=meta_name,
+                                                                   subtitle=description,
                                                                    mtype=mediatype)
                             if not media_info:
                                 log.warn("【RssChecker】%s 识别媒体信息出错！" % title)
@@ -317,7 +320,7 @@ class RssChecker(object):
                         res_num = res_num + 1
                 elif task_type == "R":
                     # 识别种子名称，开始搜索TMDB
-                    media_info = MetaInfo(title=meta_name, mtype=mediatype)
+                    media_info = MetaInfo(title=meta_name, subtitle=description, mtype=mediatype)
                     # 检查种子是否匹配过滤条件
                     filter_args = {
                         "include": taskinfo.get("include"),
@@ -686,7 +689,8 @@ class RssChecker(object):
         if not taskinfo:
             return
         for article in articles:
-            media = self.media.get_media_info(title=article.get("title"))
+            description = article.get("description", "")
+            media = self.media.get_media_info(title=article.get("title"), subtitle=description)
             media.set_torrent_info(enclosure=article.get("enclosure"))
             downloader_id, ret, dir, ret_msg = self.downloader.download(
                 media_info=media,

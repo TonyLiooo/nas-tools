@@ -4,7 +4,7 @@ from datetime import datetime
 
 from app.message.client._base import _IMessageClient
 from app.utils import RequestUtils, ExceptionUtils, StringUtils, NumberUtils
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 import log
 from typing import List
 
@@ -38,6 +38,8 @@ class WeChat(_IMessageClient):
     _create_menu_url = "/cgi-bin/menu/create?access_token={access_token}&agentid={agentid}"
     # 企业微信删除菜单URL
     _delete_menu_url = "/cgi-bin/menu/delete?access_token={access_token}&agentid={agentid}"
+    # 企业微信获取菜单URL
+    _get_menu_url = "/cgi-bin/menu/get?access_token={access_token}&agentid={agentid}"
 
     def __init__(self, config):
         self._client_config = config
@@ -49,12 +51,25 @@ class WeChat(_IMessageClient):
             self._corpid = self._client_config.get('corpid')
             self._corpsecret = self._client_config.get('corpsecret')
             self._agent_id = self._client_config.get('agentid')
-            self._proxy = self._client_config.get('default_proxy') or "https://qyapi.weixin.qq.com"
+            orig_proxy = self._client_config.get('default_proxy')
+            proxy = orig_proxy or "https://qyapi.weixin.qq.com"
+            if isinstance(proxy, str):
+                proxy = proxy.strip()
+                if proxy and not (proxy.startswith('http://') or proxy.startswith('https://')):
+                    proxy = 'https://' + proxy
+            else:
+                proxy = "https://qyapi.weixin.qq.com"
+            self._proxy = proxy
+            # 标记是否为用户显式配置代理，仅在未配置代理（使用默认官方域名）时才进行域名回退
+            self._user_set_proxy = True if orig_proxy else False
         
-            self._send_msg_url = urljoin(self._proxy, self._send_msg_url)
-            self._token_url = urljoin(self._proxy, self._token_url)
-            self._create_menu_url = urljoin(self._proxy, self._create_menu_url)
-            self._delete_menu_url = urljoin(self._proxy, self._delete_menu_url)
+            def _join(base: str, path: str) -> str:
+                return f"{base.rstrip('/')}/{path.lstrip('/')}"
+            self._send_msg_url = _join(self._proxy, self._send_msg_url)
+            self._token_url = _join(self._proxy, self._token_url)
+            self._create_menu_url = _join(self._proxy, self._create_menu_url)
+            self._delete_menu_url = _join(self._proxy, self._delete_menu_url)
+            self._get_menu_url = _join(self._proxy, self._get_menu_url)
 
         if self._corpid and self._corpsecret and self._agent_id:
             self.__get_access_token()
@@ -293,7 +308,7 @@ class WeChat(_IMessageClient):
         """
         处理请求发送的函数，带有重试机制
         """
-        message_url = message_url.format(access_token=self.__get_access_token())
+        message_url = self._format_url(message_url)
         headers = {'content-type': 'application/json'}
         res = RequestUtils(headers=headers).post(message_url,
                                                      data=json.dumps(req_json, ensure_ascii=False).encode('utf-8'))
@@ -319,3 +334,53 @@ class WeChat(_IMessageClient):
         except Exception as err:
             ExceptionUtils.exception_traceback(err)
             return False, str(err)
+
+    def _format_url(self, url: str) -> str:
+        return url.format(access_token=self.__get_access_token(), agentid=self._agent_id)
+
+    def __get_request(self, url: str):
+        try:
+            full_url = self._format_url(url)
+            res = RequestUtils().get_res(full_url)
+            if res and res.status_code == 200:
+                return True, res.json()
+            elif res is not None:
+                return False, {"errcode": res.status_code, "errmsg": res.reason}
+            else:
+                return False, {"errcode": -1, "errmsg": "no response"}
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return False, {"errcode": -1, "errmsg": str(err)}
+
+    def create_menu(self, menu: dict):
+        """
+        创建企业微信应用菜单
+        :param menu: 菜单JSON，形如{"button": [...]}，遵循企业微信规范
+        """
+        if not self.__get_access_token():
+            return False, "未获取到access_token"
+        if not isinstance(menu, dict) or not menu.get("button"):
+            return False, "菜单结构不合法"
+        return self.__post_request(self._create_menu_url, menu)
+
+    def delete_menu(self):
+        """删除企业微信应用菜单"""
+        if not self.__get_access_token():
+            return False, "未获取到access_token"
+        ok, ret = self.__get_request(self._delete_menu_url)
+        if ok and ret.get('errcode') == 0:
+            return True, ret.get('errmsg', 'ok')
+        return False, ret.get('errmsg') if isinstance(ret, dict) else str(ret)
+
+    def get_menu(self):
+        """获取企业微信应用菜单"""
+        if not self.__get_access_token():
+            return False, "未获取到access_token"
+        ok, ret = self.__get_request(self._get_menu_url)
+        if ok:
+            if isinstance(ret, dict):
+                if ret.get('errcode') == 0:
+                    return True, ret
+                return False, ret.get('errmsg') or ret
+            return True, ret
+        return False, ret

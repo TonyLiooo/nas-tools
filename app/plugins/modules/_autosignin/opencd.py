@@ -43,7 +43,7 @@ class Opencd(_ISiteSigninHandler):
         index_res = RequestUtils(cookies=site_cookie,
                                  headers=ua,
                                  proxies=proxy
-                                 ).get_res(url='https://www.open.cd')
+                                 ).get_res(url='https://open.cd')
         if not index_res or index_res.status_code != 200:
             self.error(f"签到失败，请检查站点连通性")
             return False, f'【{site}】签到失败，请检查站点连通性'
@@ -60,7 +60,7 @@ class Opencd(_ISiteSigninHandler):
         sign_param_res = RequestUtils(cookies=site_cookie,
                                       headers=ua,
                                       proxies=proxy
-                                      ).get_res(url='https://www.open.cd/plugin_sign-in.php')
+                                      ).get_res(url='https://open.cd/plugin_sign-in.php')
         if not sign_param_res or sign_param_res.status_code != 200:
             self.error(f"签到失败，请检查站点连通性")
             return False, f'【{site}】签到失败，请检查站点连通性'
@@ -78,7 +78,7 @@ class Opencd(_ISiteSigninHandler):
             return False, f'【{site}】签到失败，获取签到参数失败'
 
         # 完整验证码url
-        img_get_url = 'https://www.open.cd/%s' % img_url
+        img_get_url = 'https://open.cd/%s' % img_url
         self.debug(f"获取到{site}验证码链接 {img_get_url}")
 
         # ocr识别多次，获取6位验证码
@@ -109,7 +109,7 @@ class Opencd(_ISiteSigninHandler):
             sign_res = RequestUtils(cookies=site_cookie,
                                     headers=ua,
                                     proxies=proxy
-                                    ).post_res(url='https://www.open.cd/plugin_sign-in.php?cmd=signin', data=data)
+                                    ).post_res(url='https://open.cd/plugin_sign-in.php?cmd=signin', data=data)
             if sign_res and sign_res.status_code == 200:
                 self.debug(f"sign_res返回 {sign_res.text}")
                 # sign_res.text = '{"state":"success","signindays":"0","integral":"10"}'

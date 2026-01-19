@@ -162,27 +162,42 @@ class _ISiteUserInfo(metaclass=ABCMeta):
             self.message_unread_contents.append((head, date, content))
 
     async def _parse_seeding_pages(self):
-        if self._user_detail_page:
-            referer_url = urljoin(self._base_url, self._user_detail_page)
-            self._torrent_seeding_headers = {
-                "Referer": referer_url,
-                "Accept-Language": "zh-CN,zh;q=0.9", 
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors", 
-                "Sec-Fetch-Site": "same-origin",
-                "X-Requested-With": "XMLHttpRequest",
-            }
+        referer_url = urljoin(self._base_url, self._user_detail_page) if self._user_detail_page else self._base_url
+
+        def _build_seeding_headers(target_url):
+            if "ajax" in str(target_url).lower():
+                return {
+                    "Referer": referer_url,
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                }
+            else:
+                return {
+                    "Referer": referer_url,
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Site": "same-origin",
+                    "Sec-Fetch-User": "?1",
+                    "Upgrade-Insecure-Requests": "1",
+                }
+
         if self._torrent_seeding_page:
-            # 第一页
+            first_url = urljoin(self._base_url, self._torrent_seeding_page)
+            self._torrent_seeding_headers = _build_seeding_headers(first_url)
             next_page = self._parse_user_torrent_seeding_info(
-                await self._get_page_content(urljoin(self._base_url, self._torrent_seeding_page),
+                await self._get_page_content(first_url,
                                        self._torrent_seeding_params,
                                        self._torrent_seeding_headers))
 
             # 其他页处理
             while next_page:
+                next_url = urljoin(urljoin(self._base_url, self._torrent_seeding_page), next_page)
+                self._torrent_seeding_headers = _build_seeding_headers(next_url)
                 next_page = self._parse_user_torrent_seeding_info(
-                    await self._get_page_content(urljoin(urljoin(self._base_url, self._torrent_seeding_page), next_page),
+                    await self._get_page_content(next_url,
                                            self._torrent_seeding_params,
                                            self._torrent_seeding_headers),
                     multi_page=True)
@@ -215,10 +230,48 @@ class _ISiteUserInfo(metaclass=ABCMeta):
             if fav_link:
                 self._favicon_url = urljoin(self._base_url, fav_link[0])
 
-        res = RequestUtils(cookies=self._site_cookie, session=self._session, timeout=60, headers=self._ua).get_res(
-            url=self._favicon_url)
+        # 非关键路径：拉取站点图标，避免阻塞整体解析
+        res = RequestUtils(
+            cookies=self._site_cookie,
+            session=self._session,
+            timeout=(5, 5),
+            headers=self._ua,
+            proxies=Config().get_proxies() if self._proxy else None,
+            retries=0,
+            exception_retries=0,
+            backoff_factor=0.1,
+            status_forcelist=(),
+            allowed_methods=frozenset(["HEAD", "GET", "OPTIONS"])
+        ).get_res(url=self._favicon_url)
         if res:
             self.site_favicon = base64.b64encode(res.content).decode()
+
+    async def _execute_javascript_url(self, js_url):
+        """
+        在当前浏览器页面执行 JavaScript URL 中的代码
+        """
+        if not self.chrome or not self.chrome._tab:
+            log.warn(f"【Sites】{self.site_name} 无法执行 JavaScript URL：浏览器未打开")
+            return ""
+        
+        js_code = re.sub(r'^javascript:\s*', '', js_url, flags=re.IGNORECASE)
+        if not js_code:
+            return ""
+        
+        try:
+            await self.chrome.execute_script(js_code)
+            await asyncio.sleep(2)
+            try:
+                await asyncio.wait_for(ChromeHelper.check_document_ready(self.chrome._tab), timeout=10)
+            except asyncio.TimeoutError:
+                pass
+            return await self.chrome.get_html()
+        except Exception as e:
+            log.error(f"【Sites】{self.site_name} 执行 JavaScript 失败: {str(e)}")
+            try:
+                return await self.chrome.get_html()
+            except Exception:
+                return ""
 
     async def _get_page_content(self, url, params=None, headers=None):
         """
@@ -227,6 +280,26 @@ class _ISiteUserInfo(metaclass=ABCMeta):
         :param headers: 额外的请求头
         :return:
         """
+        # 验证URL有效性
+        if not url:
+            log.warn(f"【Sites】{self.site_name} 无效的URL: 空URL")
+            return ""
+        
+        # 处理 JavaScript URL：在当前浏览器页面执行 JavaScript 代码
+        if url.lower().startswith('javascript:'):
+            return await self._execute_javascript_url(url)
+        
+        parsed_url = urlsplit(url)
+        if parsed_url.scheme and parsed_url.scheme.lower() not in ('http', 'https', ''):
+            log.warn(f"【Sites】{self.site_name} 跳过不支持的URL协议 '{parsed_url.scheme}': {url[:100]}")
+            return ""
+        
+        if not parsed_url.netloc and not url.startswith('/'):
+            # 相对路径应该以 / 开头，否则可能是无效URL
+            if ':' in url.split('/')[0]:  # 检查是否像 "data:..." 这样的伪协议
+                log.warn(f"【Sites】{self.site_name} 跳过无效的URL: {url[:100]}")
+                return ""
+        
         req_headers = None
         proxies = Config().get_proxies() if self._proxy else None
         if self._ua or headers or self._addition_headers:

@@ -173,8 +173,10 @@ class Searcher:
                 # 插入数据库
                 self.insert_search_results(media_list)
 
-            # 微信未开自动下载时返回
-            if not self._search_auto:
+            # 订阅搜索（RSS）时强制启用自动下载，其他渠道根据配置决定
+            should_auto_download = self._search_auto or (in_from == SearchType.RSS)
+            # 微信未开自动下载时返回（订阅搜索除外）
+            if not should_auto_download:
                 return None, no_exists, len(media_list), None, media_list
             # 择优下载
             download_items, left_medias = self.downloader.batch_download(in_from=in_from,

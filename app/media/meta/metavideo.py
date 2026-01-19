@@ -137,7 +137,7 @@ class MetaVideo(MetaBase):
                 self.resource_type = f"{self.resource_type} DIY"
         # 解析副标题，只要季和集
         self.init_subtitle(self.org_string)
-        if not self._subtitle_flag and self.subtitle:
+        if self.subtitle and (not self._subtitle_flag or self.begin_episode is None):
             self.init_subtitle(self.subtitle)
         # 没有识别出类型时默认为电影
         if not self.type:

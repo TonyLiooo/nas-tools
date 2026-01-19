@@ -4,6 +4,7 @@ import hashlib
 import random
 import re
 import os
+import log
 from urllib import parse
 
 import cn2an
@@ -407,9 +408,12 @@ class StringUtils:
             return datetime_str
 
         try:
-            return dateparser.parse(datetime_str).strftime('%Y-%m-%d %H:%M:%S')
+            parsed_date = dateparser.parse(str(datetime_str))
+            if not parsed_date:
+                return datetime_str
+            return parsed_date.strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
-            ExceptionUtils.exception_traceback(e)
+            log.error(f"Error parsing date string '{datetime_str}': {str(e)}")
             return datetime_str
 
     @staticmethod

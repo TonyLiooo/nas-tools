@@ -229,8 +229,11 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
         next_page_text = html.xpath('//a[contains(.//text(), "下一页") or contains(.//text(), "下一頁") or contains(.//text(), ">")]/@href')
         if next_page_text:
             next_page = next_page_text[-1].strip()
-            if self.userid not in next_page:
-                next_page = f'{next_page}&userid={self.userid}&type=seeding'
+            # JavaScript URL 可以直接返回（由 _execute_javascript_url 处理）
+            # 对于普通 HTTP URL，需要补充参数
+            if next_page and not next_page.lower().startswith('javascript:'):
+                if self.userid not in next_page:
+                    next_page = f'{next_page}&userid={self.userid}&type=seeding'
 
         return next_page
 
@@ -259,27 +262,29 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
         last_seen_text = html.xpath(
             '//tr/td[text()="最近动向" or text()="最近動向" or text()="上次访问"]/following-sibling::td[1]//text()'
             '|//div/b[text()="最近动向"]/../text()|//span[text()="最近動向："]/following-sibling::span[1]/text()'
+            '|//span[@class="font-bold" and text()="最近动向："]/following-sibling::span[1]//text()'
+            '|//span[@class="font-bold" and text()="最近動向："]/following-sibling::span[1]//text()'
         )
         if last_seen_text:
-            # 获取冒号前的连续字符 + 标准时间
-            full_text = ''.join(last_seen_text)
-            
-            # 连续非空字符 + 冒号 + 标准时间
-            time_pattern = r'([^\s:：]+)[:：]\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
-            time_matches = re.findall(time_pattern, full_text)
-            
-            if time_matches:
-                time_lines = []
-                seen_labels = set()
-                for label, abs_time in time_matches:
-                    if label and label not in seen_labels:
-                        seen_labels.add(label)
-                        unified_time = StringUtils.unify_datetime_str(abs_time)
-                        if unified_time:
-                            time_lines.append(f"{label}: {unified_time}")
-                self.last_seen = '\n'.join(time_lines)
+            title_nodes = html.xpath('//span[@class="font-bold" and (text()="最近动向：" or text()="最近動向：" or text()="上次访问：")]/following-sibling::span[1]//span[@title]/@title')
+            if title_nodes and title_nodes[0].strip():
+                self.last_seen = StringUtils.unify_datetime_str(title_nodes[0].strip())
             else:
-                self.last_seen = StringUtils.unify_datetime_str(last_seen_text[0].split(' (')[0].strip())
+                full_text = ''.join(last_seen_text)
+                time_pattern = r'([^\s:：]+)[:：]\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
+                time_matches = re.findall(time_pattern, full_text)
+                if time_matches:
+                    time_lines = []
+                    seen_labels = set()
+                    for label, abs_time in time_matches:
+                        if label and label not in seen_labels:
+                            seen_labels.add(label)
+                            unified_time = StringUtils.unify_datetime_str(abs_time)
+                            if unified_time:
+                                time_lines.append(f"{label}: {unified_time}")
+                    self.last_seen = '\n'.join(time_lines)
+                else:
+                    self.last_seen = StringUtils.unify_datetime_str(last_seen_text[0].split(' (')[0].strip())
 
         upload_match = re.search(r"[^总]上[传傳]量?[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+[KMGTPI]*B)", html_text,
                                  re.IGNORECASE)

@@ -194,15 +194,20 @@ class WebUtils:
         return range(StartPage, EndPage + 1)
 
     @staticmethod
-    @lru_cache(maxsize=128)
-    def request_cache(url):
+    def request_cache(url, cookies=None):
         """
         带缓存的请求
+        :param url: 图片URL
+        :param cookies: 可选的Cookie字典
         """
-        if url.find('douban'):
-            ret = RequestUtils(referer="https://movie.douban.com").get_res(url)
+        if "douban" in url:
+            ru = RequestUtils(referer="https://movie.douban.com", accept_type="image/*")
         else:
-            ret = RequestUtils().get_res(url)
+            headers = None
+            if cookies:
+                headers = dict(cookies)
+            ru = RequestUtils(headers=headers, accept_type="image/*")
+        ret = ru.get_res(url)
         if ret:
             return ret.content
         

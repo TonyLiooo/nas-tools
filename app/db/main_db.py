@@ -1,8 +1,11 @@
 import os
 import threading
-from sqlalchemy import create_engine, text, inspect
+import sqlite3
+import time
+from sqlalchemy import create_engine, text, inspect, event
 from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import NullPool
+from sqlalchemy.exc import OperationalError
 
 from app.db.models import Base
 from app.utils import ExceptionUtils, PathUtils
@@ -10,18 +13,26 @@ from config import Config
 
 lock = threading.Lock()
 _Engine = create_engine(
-    f"sqlite:///{os.path.join(Config().get_config_path(), 'user.db')}?check_same_thread=False",
+    f"sqlite:///{os.path.join(Config().get_config_path(), 'user.db')}",
     echo=False,
-    poolclass=QueuePool,
+    poolclass=NullPool,
     pool_pre_ping=True,
-    pool_size=100,
-    pool_recycle=60 * 10,
-    max_overflow=0
+    connect_args={"check_same_thread": False, "timeout": 30}
 )
 _Session = scoped_session(sessionmaker(bind=_Engine,
                                        autoflush=True,
                                        autocommit=False,
                                        expire_on_commit=False))
+
+
+@event.listens_for(_Engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+    cursor.execute("PRAGMA busy_timeout=30000;")
+    cursor.execute("PRAGMA foreign_keys=ON;")
+    cursor.close()
 
 
 class MainDb:
@@ -105,11 +116,25 @@ class MainDb:
         """
         self.session.flush()
 
-    def commit(self):
+    def commit(self, retries=5, backoff=0.1):
         """
-        提交事务
+        提交事务（在数据库锁冲突时重试）
         """
-        self.session.commit()
+        last_exc = None
+        for i in range(retries):
+            try:
+                self.session.commit()
+                return
+            except OperationalError as e:
+                msg = str(getattr(e, "orig", e))
+                if "database is locked" in msg or "database is busy" in msg:
+                    self.session.rollback()
+                    time.sleep(backoff * (2 ** i))
+                    last_exc = e
+                    continue
+                raise
+        if last_exc:
+            raise last_exc
 
     def rollback(self):
         """
@@ -138,3 +163,7 @@ class DbPersist(object):
                 return False
 
         return persist
+
+
+def remove_session():
+    _Session.remove()

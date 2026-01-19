@@ -15,7 +15,7 @@
 <div class="page-body">
   <div class="container-xl">
     <div class="d-grid gap-3 grid-normal-card">
-    {% for Id, Scheduler in SchedulerTasks.items() %}
+      {% for Id, Scheduler in SchedulerTasks.items() %}
       <div class="card card-sm card-link-pop">
         <div class="card-body">
           <div class="row align-items-center">
@@ -26,8 +26,8 @@
             </div>
             <div class="col">
               <div class="font-weight-medium">
-                <a href="javascript:show_service_modal('{{ Id }}','{{ Scheduler.name }}')"
-                  id="service_btn">{{ Scheduler.name }}</a>
+                <a href="javascript:show_service_modal('{{ Id }}','{{ Scheduler.name }}')" id="service_btn">{{
+                  Scheduler.name }}</a>
               </div>
               <div class="text-muted">
                 {{ Scheduler.time }}
@@ -41,7 +41,7 @@
           </div>
         </div>
       </div>
-    {% endfor %}
+      {% endfor %}
     </div>
   </div>
 </div>
@@ -59,6 +59,147 @@
   </div>
 </div>
 {% endif %}
+<style>
+  #modal-system-processes .table-modal-body {
+    overflow-x: auto;
+    padding-left: 1rem;
+    padding-right: .5rem;
+  }
+
+  #modal-system-processes .modal-dialog {
+    max-width: 820px;
+  }
+
+  #modal-system-processes table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  #modal-system-processes table td,
+  #modal-system-processes table th {
+    vertical-align: middle;
+    padding-left: .4rem;
+    padding-right: .4rem;
+  }
+
+  #modal-system-processes thead th {
+    white-space: nowrap;
+  }
+
+  #modal-system-processes #system_processes_content td {
+    line-height: 1.25;
+  }
+
+  #modal-system-processes #system_processes_content td:not(.col-name):not(.col-start) {
+    white-space: nowrap;
+  }
+
+  #modal-system-processes #system_processes_content td.col-name {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  #modal-system-processes #th_process_id,
+  #modal-system-processes #system_processes_content td.col-pid {
+    width: 64px;
+    min-width: 64px;
+    max-width: 64px;
+  }
+
+  #modal-system-processes #th_process_name,
+  #modal-system-processes #system_processes_content td.col-name {
+    width: 170px;
+    min-width: 170px;
+    max-width: 170px;
+  }
+
+  #modal-system-processes #th_process_status,
+  #modal-system-processes #system_processes_content td.col-status {
+    width: 66px;
+    min-width: 66px;
+    max-width: 66px;
+  }
+
+  #modal-system-processes #th_process_cpu,
+  #modal-system-processes #system_processes_content td.col-cpu {
+    width: 64px;
+    min-width: 64px;
+    max-width: 64px;
+  }
+
+  #modal-system-processes #th_process_start,
+  #modal-system-processes #system_processes_content td.col-start {
+    width: 128px;
+    min-width: 128px;
+    max-width: 128px;
+    white-space: normal;
+  }
+
+  #modal-system-processes #system_processes_content td.col-start>div {
+    white-space: nowrap;
+  }
+
+  #modal-system-processes #th_process_time,
+  #modal-system-processes #system_processes_content td.col-time {
+    width: 84px;
+    min-width: 84px;
+    max-width: 84px;
+  }
+
+  #modal-system-processes #th_process_memory,
+  #modal-system-processes #system_processes_content td.col-memory {
+    width: 76px;
+    min-width: 76px;
+    max-width: 76px;
+  }
+
+  #modal-system-processes #th_process_op,
+  #modal-system-processes #system_processes_content td.col-operation {
+    width: 52px;
+    min-width: 52px;
+    max-width: 52px;
+  }
+
+  #modal-system-processes #system_processes_content td.col-time {
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #modal-system-processes #system_processes_content td.col-memory {
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #modal-system-processes #th_process_time {
+    text-align: left;
+  }
+
+  #modal-system-processes #th_process_memory {
+    text-align: right;
+  }
+
+  #modal-system-processes #th_process_cpu,
+  #modal-system-processes #system_processes_content td.col-cpu {
+    text-align: center;
+  }
+
+  #modal-system-processes #system_processes_content td.col-status,
+  #modal-system-processes #system_processes_content td.col-operation,
+  #modal-system-processes #th_process_status,
+  #modal-system-processes #th_process_op {
+    text-align: center;
+  }
+
+  #modal-system-processes #system_processes_content td.col-status .badge {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
 <div class="modal modal-blur fade" id="modal-nametest" tabindex="-1" role="dialog" aria-hidden="true"
   data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
@@ -71,8 +212,8 @@
         <div class="row">
           <div class="col">
             <div class="mb-3">
-              <label class="form-label">资源名称 <span class="form-help"
-                  title="用于测试名称识别情况，无法识别请查询TMDB后酌情添加自定义识别词" data-bs-toggle="tooltip">?</span></label>
+              <label class="form-label">资源名称 <span class="form-help" title="用于测试名称识别情况，无法识别请查询TMDB后酌情添加自定义识别词"
+                  data-bs-toggle="tooltip">?</span></label>
               <input type="text" value="" id="test_name" class="form-control" placeholder="种子名/文件名等">
             </div>
           </div>
@@ -116,15 +257,15 @@
             <div class="mb-3">
               <label class="form-label required">过滤规则</label>
               <select class="form-select" id="test_rulegroup">
-                  {% if RuleGroups %}
-                  <option value="0">请选择</option>
-                  {% for RuleGroup in RuleGroups %}
-                  <option value="{{ RuleGroup.id }}">{{ RuleGroup.name }}</option>
-                  {% endfor %}
-                  {% else %}
-                  <option value="0">未配置</option>
-                  {% endif %}
-                </select>
+                {% if RuleGroups %}
+                <option value="0">请选择</option>
+                {% for RuleGroup in RuleGroups %}
+                <option value="{{ RuleGroup.id }}">{{ RuleGroup.name }}</option>
+                {% endfor %}
+                {% else %}
+                <option value="0">未配置</option>
+                {% endif %}
+              </select>
             </div>
           </div>
         </div>
@@ -223,17 +364,35 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="table-responsive table-modal-body">
+        <div class="px-3 pt-2">
+          <div class="row g-2">
+            <div class="col">
+              <input type="text" id="system_process_filter" class="form-control" placeholder="筛选名称/状态/PID">
+            </div>
+            <div class="col-auto">
+              <select id="system_process_status_filter" class="form-select">
+                <option value="">全部状态</option>
+              </select>
+            </div>
+          </div>
+        </div>
         <table class="table table-vcenter card-table table-hover table-striped">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>名称</th>
-              <th>运行时长</th>
-              <th>占用内存</th>
+              <th id="th_process_id" onclick="set_process_sort('id')" style="cursor:pointer">PID</th>
+              <th id="th_process_name" onclick="set_process_sort('name')" style="cursor:pointer">名称</th>
+              <th id="th_process_status" onclick="set_process_sort('status')" style="cursor:pointer">状态</th>
+              <th id="th_process_cpu" onclick="set_process_sort('cpu')" style="cursor:pointer">CPU占用</th>
+              <th id="th_process_start" onclick="set_process_sort('start_epoch')" style="cursor:pointer">开始时间</th>
+              <th id="th_process_time" onclick="set_process_sort('time')" style="cursor:pointer">运行时长</th>
+              <th id="th_process_memory" onclick="set_process_sort('memory')" style="cursor:pointer">占用内存</th>
+              <th id="th_process_op">操作</th>
             </tr>
           </thead>
           <tbody id="system_processes_content">
-            <tr><td colspan="4" class="text-center">加载中...</td></tr>
+            <tr>
+              <td colspan="8" class="text-center">加载中...</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -244,7 +403,7 @@
   </div>
 </div>
 <div class="modal modal-blur fade" id="modal-service-sync" tabindex="-1" role="dialog" aria-hidden="true"
-     data-bs-backdrop="static" data-bs-keyboard="false">
+  data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
     <div class="modal-content">
       <div class="modal-header">
@@ -255,15 +414,14 @@
         <div class="row">
           <div class="col">
             <div class="mb-3">
-              <label class="form-label">源目录 <span class="form-help"
-                                                    title="不选择时默认全部运行"
-                                                    data-bs-toggle="tooltip">?</span></label>
+              <label class="form-label">源目录 <span class="form-help" title="不选择时默认全部运行"
+                  data-bs-toggle="tooltip">?</span></label>
               <div class="form-selectgroup">
                 {% for SyncId, SyncPath in SyncPaths.items() %}
-                  <label class="form-selectgroup-item">
-                    <input type="checkbox" name="service_sync_dir" value="{{ SyncId }}" class="form-selectgroup-input">
-                    <span class="form-selectgroup-label">{{ SyncPath.from }}</span>
-                  </label>
+                <label class="form-selectgroup-item">
+                  <input type="checkbox" name="service_sync_dir" value="{{ SyncId }}" class="form-selectgroup-input">
+                  <span class="form-selectgroup-label">{{ SyncPath.from }}</span>
+                </label>
                 {% endfor %}
               </div>
             </div>
@@ -276,12 +434,175 @@
     </div>
   </div>
 </div>
+<style>
+  #modal-chrome-cache .table-modal-body {
+    overflow-x: auto;
+    padding-left: 1rem;
+    padding-right: .5rem;
+  }
+
+  #modal-chrome-cache .modal-dialog {
+    max-width: 900px;
+  }
+
+  #modal-chrome-cache table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  #modal-chrome-cache table td,
+  #modal-chrome-cache table th {
+    vertical-align: middle;
+    padding-left: .4rem;
+    padding-right: .4rem;
+  }
+
+  #modal-chrome-cache thead th {
+    white-space: nowrap;
+  }
+
+  #modal-chrome-cache #chrome_cache_content td {
+    line-height: 1.25;
+  }
+
+  #modal-chrome-cache #chrome_cache_content td.col-domain {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  #modal-chrome-cache #th_cache_check,
+  #modal-chrome-cache #chrome_cache_content td.col-check {
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    text-align: center;
+  }
+
+  #modal-chrome-cache #th_cache_domain,
+  #modal-chrome-cache #chrome_cache_content td.col-domain {
+    width: 180px;
+    min-width: 180px;
+    max-width: 180px;
+  }
+
+  #modal-chrome-cache #th_cache_size,
+  #modal-chrome-cache #chrome_cache_content td.col-size {
+    width: 80px;
+    min-width: 80px;
+    max-width: 80px;
+    text-align: right;
+  }
+
+  #modal-chrome-cache #th_cache_created,
+  #modal-chrome-cache #chrome_cache_content td.col-created {
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+  }
+
+  #modal-chrome-cache #th_cache_access,
+  #modal-chrome-cache #chrome_cache_content td.col-access {
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+  }
+
+  #modal-chrome-cache #th_cache_status,
+  #modal-chrome-cache #chrome_cache_content td.col-status {
+    width: 70px;
+    min-width: 70px;
+    max-width: 70px;
+    text-align: center;
+  }
+
+  #modal-chrome-cache #th_cache_op,
+  #modal-chrome-cache #chrome_cache_content td.col-operation {
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
+    text-align: center;
+  }
+</style>
+<div class="modal modal-blur fade" id="modal-chrome-cache" tabindex="-1" role="dialog" aria-hidden="true"
+  data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">仿真缓存管理</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="table-responsive table-modal-body">
+        <div class="px-3 pt-2">
+          <div class="row g-2 mb-2">
+            <div class="col">
+              <input type="text" id="chrome_cache_filter" class="form-control" placeholder="筛选域名">
+            </div>
+            <div class="col-auto">
+              <button id="chrome_cache_refresh_btn" class="btn btn-outline-primary"
+                onclick="refresh_chrome_cache()">刷新</button>
+            </div>
+          </div>
+          <div class="row g-2">
+            <div class="col-auto">
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">创建时间</span>
+                <input type="date" id="chrome_cache_created_start" class="form-control" style="width:130px">
+                <span class="input-group-text">~</span>
+                <input type="date" id="chrome_cache_created_end" class="form-control" style="width:130px">
+              </div>
+            </div>
+            <div class="col-auto">
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">最后使用</span>
+                <input type="date" id="chrome_cache_access_start" class="form-control" style="width:130px">
+                <span class="input-group-text">~</span>
+                <input type="date" id="chrome_cache_access_end" class="form-control" style="width:130px">
+              </div>
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-sm btn-outline-secondary" onclick="clear_chrome_cache_date_filter()">清除日期</button>
+            </div>
+          </div>
+        </div>
+        <table class="table table-vcenter card-table table-hover table-striped">
+          <thead>
+            <tr>
+              <th id="th_cache_check"><input type="checkbox" id="chrome_cache_check_all"
+                  onclick="toggle_all_chrome_cache(this)"></th>
+              <th id="th_cache_domain" onclick="set_chrome_cache_sort('domain')" style="cursor:pointer">域名</th>
+              <th id="th_cache_size" onclick="set_chrome_cache_sort('size_bytes')" style="cursor:pointer">大小</th>
+              <th id="th_cache_created" onclick="set_chrome_cache_sort('created_timestamp')" style="cursor:pointer">创建时间
+              </th>
+              <th id="th_cache_access" onclick="set_chrome_cache_sort('last_access_timestamp')" style="cursor:pointer">
+                最后使用</th>
+              <th id="th_cache_status" onclick="set_chrome_cache_sort('is_locked')" style="cursor:pointer">状态</th>
+              <th id="th_cache_op">操作</th>
+            </tr>
+          </thead>
+          <tbody id="chrome_cache_content">
+            <tr>
+              <td colspan="7" class="text-center">加载中...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <span id="chrome_cache_selected_info" class="me-auto text-muted">已选择 0 项</span>
+        <button id="chrome_cache_delete_selected_btn" class="btn btn-danger me-2"
+          onclick="delete_selected_chrome_cache()" disabled>删除选中</button>
+        <button id="chrome_cache_delete_all_btn" class="btn btn-outline-danger"
+          onclick="delete_all_chrome_cache()">清空全部</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script type="text/javascript">
 
   // 显示服务提示框
   function show_service_modal(id, name) {
-    switch(id) {
+    switch (id) {
       case "nametest":
         $('#modal-nametest').modal('show');
         break;
@@ -318,6 +639,10 @@
       case "sync":
         $('#modal-service-sync').modal('show');
         break;
+      case "chromecache":
+        $('#modal-chrome-cache').modal('show');
+        setTimeout(refresh_chrome_cache, 500);
+        break;
       default:
         show_ask_modal("是否立即运行 " + name + "？", function () {
           hide_ask_modal();
@@ -328,7 +653,7 @@
 
   // 运行服务
   function run_scheduler(id, name) {
-    const data = {"item": id};
+    const data = { "item": id };
     ajax_post("sch", data, function (ret) {
       show_success_modal(`${name} 服务启动成功，正在后台运行`);
     });
@@ -351,8 +676,8 @@
     let nettest_count_total = url_indexs.length;
     let nettest_count_finished = 0;
     btn_obj.text("测试中...").attr("disabled", true);
-    for (let url_index of url_indexs){
-      net_test_one(url_index, ret=>{
+    for (let url_index of url_indexs) {
+      net_test_one(url_index, ret => {
         if (ret) {
           nettest_count_finished++;
           if (nettest_count_finished >= nettest_count_total) {
@@ -383,7 +708,7 @@
       if (ret.code === 0) {
         show_success_modal("备份恢复成功，请重启系统生效！");
       } else {
-        show_fail_modal(`备份恢复失败：${ret.msg}`, function() {
+        show_fail_modal(`备份恢复失败：${ret.msg}`, function () {
           $("#modal-backup").modal('show');
         });
       }
@@ -476,19 +801,209 @@
   }
 
   // 刷新系统进程
+  let SystemProcessCache = [];
+  let SystemProcessSortKey = 'id';
+  let SystemProcessSortOrder = 'asc';
+  let SystemProcessFilterText = '';
+  let SystemProcessStatusFilter = '';
+  let SystemProcessIsAdmin = false;
+
+  function parse_time_to_seconds(str) {
+    if (!str) return 0;
+    let h = 0, m = 0;
+    if (str.indexOf('小时') !== -1) {
+      const parts = str.split('小时');
+      h = parseInt(parts[0]) || 0;
+      m = parseInt(parts[1].replace('分钟', '')) || 0;
+    } else {
+      m = parseInt(String(str).replace('分钟', '')) || 0;
+    }
+    return h * 3600 + m * 60;
+  }
+
+  function status_info(statusRaw) {
+    const s = String(statusRaw || '').toLowerCase();
+    switch (s) {
+      case 'running':
+        return { label: '运行', cls: 'badge bg-green me-1 mb-1', value: s };
+      case 'sleeping':
+        return { label: '休眠', cls: 'badge bg-blue me-1 mb-1', value: s };
+      case 'disk-sleep':
+        return { label: '磁盘睡眠', cls: 'badge bg-yellow me-1 mb-1', value: s };
+      case 'stopped':
+        return { label: '停止', cls: 'badge bg-orange me-1 mb-1', value: s };
+      case 'tracing-stop':
+        return { label: '调试暂停', cls: 'badge bg-purple me-1 mb-1', value: s };
+      case 'zombie':
+        return { label: '僵尸', cls: 'badge bg-red me-1 mb-1', value: s };
+      case 'dead':
+        return { label: '已终止', cls: 'badge bg-red me-1 mb-1', value: s };
+      case 'waking':
+        return { label: '唤醒中', cls: 'badge bg-cyan me-1 mb-1', value: s };
+      case 'wake-kill':
+        return { label: '唤醒杀死', cls: 'badge bg-red me-1 mb-1', value: s };
+      case 'idle':
+        return { label: '空闲', cls: 'badge bg-gray me-1 mb-1', value: s };
+      case 'locked':
+        return { label: '锁定', cls: 'badge bg-purple me-1 mb-1', value: s };
+      case 'waiting':
+        return { label: '等待', cls: 'badge bg-gray me-1 mb-1', value: s };
+      case 'suspended':
+        return { label: '挂起', cls: 'badge bg-gray me-1 mb-1', value: s };
+      case 'parked':
+        return { label: '停驻', cls: 'badge bg-gray me-1 mb-1', value: s };
+      default:
+        return { label: s ? '其他' : '未知', cls: 'badge badge-outline me-1 mb-1', value: s };
+    }
+  }
+
+  function set_process_sort(key) {
+    if (SystemProcessSortKey === key) {
+      SystemProcessSortOrder = (SystemProcessSortOrder === 'asc') ? 'desc' : 'asc';
+    } else {
+      SystemProcessSortKey = key;
+      if (['cpu', 'memory', 'id', 'time', 'start_epoch'].indexOf(key) !== -1) {
+        SystemProcessSortOrder = 'desc';
+      } else {
+        SystemProcessSortOrder = 'asc';
+      }
+    }
+    try { localStorage.setItem('sp_sort_key', SystemProcessSortKey); localStorage.setItem('sp_sort_order', SystemProcessSortOrder); } catch (e) { }
+    update_sort_indicators();
+    render_system_processes();
+  }
+
+  function set_process_filter(val) {
+    SystemProcessFilterText = (val || '').toLowerCase();
+    try { localStorage.setItem('sp_filter_text', SystemProcessFilterText); } catch (e) { }
+    render_system_processes();
+  }
+
+  function set_process_status_filter(val) {
+    SystemProcessStatusFilter = String(val || '').toLowerCase();
+    try { localStorage.setItem('sp_status_filter', SystemProcessStatusFilter); } catch (e) { }
+    render_system_processes();
+  }
+
+  function update_sort_indicators() {
+    const up = '▲';
+    const down = '▼';
+    const map = {
+      'id': ['#th_process_id', 'PID'],
+      'name': ['#th_process_name', '名称'],
+      'status': ['#th_process_status', '状态'],
+      'cpu': ['#th_process_cpu', 'CPU占用'],
+      'start_epoch': ['#th_process_start', '开始时间'],
+      'time': ['#th_process_time', '运行时长'],
+      'memory': ['#th_process_memory', '占用内存']
+    };
+    for (const k in map) {
+      const [sel, label] = map[k];
+      if (SystemProcessSortKey === k) {
+        const arrow = (SystemProcessSortOrder === 'asc') ? up : down;
+        $(sel).html(`${label} ${arrow}`);
+      } else {
+        $(sel).html(label);
+      }
+    }
+  }
+
+  function render_system_processes() {
+    let list = Array.isArray(SystemProcessCache) ? SystemProcessCache.slice(0) : [];
+    if (SystemProcessFilterText) {
+      list = list.filter(function (it) {
+        const pid = String(it.id || '');
+        const name = String(it.name || '').toLowerCase();
+        const status = String(it.status || '').toLowerCase();
+        const statusCN = String(status_info(it.status).label || '').toLowerCase();
+        return (
+          pid.indexOf(SystemProcessFilterText) !== -1 ||
+          name.indexOf(SystemProcessFilterText) !== -1 ||
+          status.indexOf(SystemProcessFilterText) !== -1 ||
+          statusCN.indexOf(SystemProcessFilterText) !== -1
+        );
+      });
+    }
+    if (SystemProcessStatusFilter) {
+      list = list.filter(function (it) {
+        return String(it.status || '').toLowerCase() === SystemProcessStatusFilter;
+      });
+    }
+    list.sort(function (a, b) {
+      const key = SystemProcessSortKey;
+      let va, vb;
+      if (key === 'time') {
+        va = parse_time_to_seconds(a.time);
+        vb = parse_time_to_seconds(b.time);
+      } else if (key === 'start_epoch') {
+        va = Number(a.start_epoch || 0);
+        vb = Number(b.start_epoch || 0);
+      } else if (key === 'name' || key === 'status') {
+        va = String(a[key] || '').toLowerCase();
+        vb = String(b[key] || '').toLowerCase();
+      } else {
+        va = Number(a[key] || 0);
+        vb = Number(b[key] || 0);
+      }
+      if (va === vb) return 0;
+      if (SystemProcessSortOrder === 'asc') return (va > vb) ? 1 : -1;
+      return (va < vb) ? 1 : -1;
+    });
+    let content = "";
+    for (let i = 0; i < list.length; i++) {
+      const pid = list[i].id;
+      const name = list[i].name || '';
+      const si = status_info(list[i].status || '');
+      const cpu = (list[i].cpu !== undefined && list[i].cpu !== null) ? list[i].cpu : 0;
+      const mem = list[i].memory;
+      const time = list[i].time;
+      const startStr = list[i].start || '';
+      let startDate = '', startTime = '';
+      if (startStr.indexOf(' ') !== -1) {
+        const parts = startStr.split(' ');
+        startDate = parts[0] || '';
+        startTime = parts[1] || '';
+      } else if (startStr.indexOf('T') !== -1) {
+        const p = startStr.split('T');
+        startDate = p[0] || '';
+        startTime = (p[1] || '').replace('Z', '');
+      } else {
+        startDate = startStr;
+        startTime = '';
+      }
+      const startHtml = `<div>${startDate}</div><div>${startTime}</div>`;
+
+      let opCellHTML = '';
+      if (SystemProcessIsAdmin) {
+        const opBtn = `<a href="javascript:void(0)" class="btn btn-sm btn-danger" title="结束进程" data-bs-toggle="tooltip" data-pid="${pid}" data-name="${name}" onclick="kill_process(this)">×</a>`;
+        opCellHTML = `<td class=\"col-operation\">${opBtn}</td>`;
+      }
+
+      content += `<tr>
+                    <td class="col-pid">${pid}</td>
+                    <td class="col-name">${name}</td>
+                    <td class="col-status"><span class="${si.cls}">${si.label}</span></td>
+                    <td class="col-cpu">${cpu}%</td>
+                    <td class="col-start">${startHtml}</td>
+                    <td class="col-time">${time}</td>
+                    <td class="col-memory">${mem} MB</td>
+                    ${opCellHTML}
+                  </tr>`;
+    }
+    if (!content) {
+      content = `<tr><td colspan="${SystemProcessIsAdmin ? 8 : 7}" class="text-center">无匹配进程</td></tr>`;
+    }
+    $("#system_processes_content").empty().append(content);
+    try { fresh_tooltip(); } catch (e) { }
+  }
+
   function refresh_system_process() {
     ajax_post("get_system_processes", {}, function (ret) {
       if (ret.code === 0) {
-        let content = "";
-        for (let i = 0; i < ret.data.length; i++) {
-          content += `<tr>
-                        <td>${ret.data[i].id}</td>
-                        <td>${ret.data[i].name}</td>
-                        <td>${ret.data[i].time}</td>
-                        <td>${ret.data[i].memory} MB</td>
-                      </tr>`;
-        }
-        $("#system_processes_content").empty().append(content);
+        SystemProcessCache = ret.data || [];
+        ensure_status_filter_options(SystemProcessCache);
+        update_sort_indicators();
+        render_system_processes();
         if ($('#modal-system-processes').is(':visible')) {
           setTimeout(refresh_system_process, 2000);
         }
@@ -496,10 +1011,89 @@
     }, true, false);
   }
 
+  $(function () {
+    // 绑定事件
+    $(document).on('input', '#system_process_filter', function () { set_process_filter($(this).val()); });
+    $(document).on('change', '#system_process_status_filter', function () { set_process_status_filter($(this).val()); });
+
+    // 读取上次偏好
+    try {
+      const sk = localStorage.getItem('sp_sort_key');
+      const so = localStorage.getItem('sp_sort_order');
+      const ft = localStorage.getItem('sp_filter_text');
+      const sf = localStorage.getItem('sp_status_filter');
+      if (sk) SystemProcessSortKey = sk;
+      if (so) SystemProcessSortOrder = so;
+      if (ft !== null && ft !== undefined) {
+        SystemProcessFilterText = ft;
+        $('#system_process_filter').val(ft);
+      }
+      if (sf !== null && sf !== undefined) {
+        SystemProcessStatusFilter = sf;
+      }
+      // 读取是否管理员（来自导航栏自定义属性）
+      const nav = document.getElementById('navbar-menu');
+      if (nav) {
+        const adm = nav.getAttribute('layout-useradmin');
+        SystemProcessIsAdmin = (String(adm) === '1');
+        if (!SystemProcessIsAdmin) {
+          $('#th_process_op').hide();
+          try { $('#system_processes_content td[colspan]').attr('colspan', 7); } catch (e) { }
+        }
+      }
+      update_sort_indicators();
+    } catch (e) { }
+  });
+
+  function ensure_status_filter_options(list) {
+    try {
+      const sel = $('#system_process_status_filter');
+      const cur = SystemProcessStatusFilter || sel.val() || '';
+      let set = new Set();
+      for (let i = 0; i < (list || []).length; i++) {
+        const s = String(list[i].status || '').toLowerCase();
+        if (s) set.add(s);
+      }
+      // Build options
+      let html = '<option value="">全部状态</option>';
+      Array.from(set).sort().forEach(function (s) {
+        const selAttr = (cur && cur === s) ? ' selected' : '';
+        const info = status_info(s);
+        html += `<option value="${s}"${selAttr}>${info.label}</option>`;
+      });
+      // Only update when options actually changed to avoid flicker
+      if (sel.html() !== html) sel.html(html);
+      if (cur) sel.val(cur);
+    } catch (e) { }
+  }
+
+  // 结束进程
+  function kill_process(btn) {
+    if (!SystemProcessIsAdmin) {
+      show_fail_modal('只有管理员才可以结束进程');
+      return;
+    }
+    const pid = $(btn).attr('data-pid');
+    const name = $(btn).attr('data-name') || '';
+    if (!pid) return;
+    show_confirm_modal(`确认结束进程 ${pid}${name ? '（' + name + '）' : ''}？`, function () {
+      hide_confirm_modal();
+      ajax_post("kill_process", { pid: pid }, function (ret) {
+        if (ret.code === 0) {
+          show_success_modal("进程已结束");
+          // 刷新一次
+          setTimeout(refresh_system_process, 500);
+        } else {
+          show_fail_modal(ret.msg || "结束进程失败");
+        }
+      }, true, false);
+    });
+  }
+
   // 立即运行目录同步
   function run_sync_now() {
     let sids = select_GetSelectedVAL("service_sync_dir");
-    ajax_post("run_directory_sync", {sid: sids}, function (ret) {
+    ajax_post("run_directory_sync", { sid: sids }, function (ret) {
       $("#modal-service-sync").modal('hide');
       if (ret.code === 0) {
         show_success_modal("目录同步已启动，正在后台运行");
@@ -508,6 +1102,275 @@
       }
     });
   }
+
+  // ========== 仿真缓存管理 ==========
+  let ChromeCacheList = [];
+  let ChromeCacheSortKey = 'last_access_timestamp';
+  let ChromeCacheSortOrder = 'desc';
+  let ChromeCacheFilterText = '';
+  let ChromeCacheCreatedStart = null;
+  let ChromeCacheCreatedEnd = null;
+  let ChromeCacheAccessStart = null;
+  let ChromeCacheAccessEnd = null;
+
+  function refresh_chrome_cache() {
+    $('#chrome_cache_refresh_btn').text('加载中...').attr('disabled', true);
+    ajax_post("get_chrome_cache_list", {}, function (ret) {
+      $('#chrome_cache_refresh_btn').text('刷新').attr('disabled', false);
+      if (ret.code === 0) {
+        ChromeCacheList = ret.data || [];
+        update_chrome_cache_sort_indicators();
+        render_chrome_cache();
+      } else {
+        $('#chrome_cache_content').html('<tr><td colspan="7" class="text-center text-danger">加载失败</td></tr>');
+      }
+    }, true, false);
+  }
+
+  function set_chrome_cache_sort(key) {
+    if (ChromeCacheSortKey === key) {
+      ChromeCacheSortOrder = (ChromeCacheSortOrder === 'asc') ? 'desc' : 'asc';
+    } else {
+      ChromeCacheSortKey = key;
+      if (['size_bytes', 'created_timestamp', 'last_access_timestamp', 'is_locked'].indexOf(key) !== -1) {
+        ChromeCacheSortOrder = 'desc';
+      } else {
+        ChromeCacheSortOrder = 'asc';
+      }
+    }
+    update_chrome_cache_sort_indicators();
+    render_chrome_cache();
+  }
+
+  function update_chrome_cache_sort_indicators() {
+    const up = '▲';
+    const down = '▼';
+    const map = {
+      'domain': ['#th_cache_domain', '域名'],
+      'size_bytes': ['#th_cache_size', '大小'],
+      'created_timestamp': ['#th_cache_created', '创建时间'],
+      'last_access_timestamp': ['#th_cache_access', '最后使用'],
+      'is_locked': ['#th_cache_status', '状态']
+    };
+    for (const k in map) {
+      const [sel, label] = map[k];
+      if (ChromeCacheSortKey === k) {
+        const arrow = (ChromeCacheSortOrder === 'asc') ? up : down;
+        $(sel).html(`${label} ${arrow}`);
+      } else {
+        $(sel).html(label);
+      }
+    }
+  }
+
+  function render_chrome_cache() {
+    let list = Array.isArray(ChromeCacheList) ? ChromeCacheList.slice(0) : [];
+
+    // 域名筛选
+    if (ChromeCacheFilterText) {
+      list = list.filter(function (it) {
+        const domain = String(it.domain || '').toLowerCase();
+        return domain.indexOf(ChromeCacheFilterText) !== -1;
+      });
+    }
+
+    // 创建时间筛选
+    if (ChromeCacheCreatedStart) {
+      const startTs = new Date(ChromeCacheCreatedStart).setHours(0, 0, 0, 0) / 1000;
+      list = list.filter(function (it) {
+        return (it.created_timestamp || 0) >= startTs;
+      });
+    }
+    if (ChromeCacheCreatedEnd) {
+      const endTs = new Date(ChromeCacheCreatedEnd).setHours(23, 59, 59, 999) / 1000;
+      list = list.filter(function (it) {
+        return (it.created_timestamp || 0) <= endTs;
+      });
+    }
+
+    // 最后使用时间筛选
+    if (ChromeCacheAccessStart) {
+      const startTs = new Date(ChromeCacheAccessStart).setHours(0, 0, 0, 0) / 1000;
+      list = list.filter(function (it) {
+        return (it.last_access_timestamp || 0) >= startTs;
+      });
+    }
+    if (ChromeCacheAccessEnd) {
+      const endTs = new Date(ChromeCacheAccessEnd).setHours(23, 59, 59, 999) / 1000;
+      list = list.filter(function (it) {
+        return (it.last_access_timestamp || 0) <= endTs;
+      });
+    }
+
+    // 排序
+    list.sort(function (a, b) {
+      const key = ChromeCacheSortKey;
+      let va, vb;
+      if (key === 'domain') {
+        va = String(a[key] || '').toLowerCase();
+        vb = String(b[key] || '').toLowerCase();
+      } else if (key === 'is_locked') {
+        va = a[key] ? 1 : 0;
+        vb = b[key] ? 1 : 0;
+      } else {
+        va = Number(a[key] || 0);
+        vb = Number(b[key] || 0);
+      }
+      if (va === vb) return 0;
+      if (ChromeCacheSortOrder === 'asc') return (va > vb) ? 1 : -1;
+      return (va < vb) ? 1 : -1;
+    });
+
+    let content = "";
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      const domain = item.domain || '';
+      const dirName = item.dir_name || '';
+      const size = item.size || '0 B';
+      const createdTime = item.created_time || '-';
+      const lastAccessTime = item.last_access_time || '-';
+      const isLocked = item.is_locked;
+
+      const statusBadge = isLocked
+        ? '<span class="badge bg-green">使用中</span>'
+        : '<span class="badge bg-secondary">空闲</span>';
+
+      const checkboxDisabled = isLocked ? 'disabled' : '';
+      const deleteBtn = isLocked
+        ? '<span class="text-muted">-</span>'
+        : `<a href="javascript:void(0)" class="btn btn-sm btn-outline-danger" title="删除" onclick="delete_single_chrome_cache('${dirName}', '${domain}')">×</a>`;
+
+      content += `<tr data-dir="${dirName}" data-locked="${isLocked}">
+                    <td class="col-check"><input type="checkbox" class="chrome-cache-checkbox" value="${dirName}" ${checkboxDisabled} onchange="update_chrome_cache_selection()"></td>
+                    <td class="col-domain" title="${domain}">${domain}</td>
+                    <td class="col-size">${size}</td>
+                    <td class="col-created">${createdTime}</td>
+                    <td class="col-access">${lastAccessTime}</td>
+                    <td class="col-status">${statusBadge}</td>
+                    <td class="col-operation">${deleteBtn}</td>
+                  </tr>`;
+    }
+
+    if (!content) {
+      content = '<tr><td colspan="7" class="text-center">暂无缓存数据</td></tr>';
+    }
+
+    $("#chrome_cache_content").empty().append(content);
+    $('#chrome_cache_check_all').prop('checked', false);
+    update_chrome_cache_selection();
+  }
+
+  function toggle_all_chrome_cache(checkbox) {
+    const isChecked = checkbox.checked;
+    $('.chrome-cache-checkbox:not(:disabled)').prop('checked', isChecked);
+    update_chrome_cache_selection();
+  }
+
+  function update_chrome_cache_selection() {
+    const selectedCount = $('.chrome-cache-checkbox:checked').length;
+    $('#chrome_cache_selected_info').text(`已选择 ${selectedCount} 项`);
+    $('#chrome_cache_delete_selected_btn').prop('disabled', selectedCount === 0);
+
+    // 更新全选框状态
+    const totalEnabled = $('.chrome-cache-checkbox:not(:disabled)').length;
+    const allChecked = totalEnabled > 0 && selectedCount === totalEnabled;
+    $('#chrome_cache_check_all').prop('checked', allChecked);
+  }
+
+  function delete_single_chrome_cache(dirName, domain) {
+    show_confirm_modal(`确认删除 ${domain} 的缓存？`, function () {
+      hide_confirm_modal();
+      ajax_post("delete_chrome_cache", { dir_names: [dirName] }, function (ret) {
+        if (ret.code === 0) {
+          show_success_modal(ret.msg || "删除成功");
+          refresh_chrome_cache();
+        } else {
+          show_fail_modal(ret.msg || "删除失败");
+        }
+      }, true, false);
+    });
+  }
+
+  function delete_selected_chrome_cache() {
+    const selected = [];
+    $('.chrome-cache-checkbox:checked').each(function () {
+      selected.push($(this).val());
+    });
+
+    if (selected.length === 0) {
+      show_fail_modal("请先选择要删除的缓存");
+      return;
+    }
+
+    show_confirm_modal(`确认删除选中的 ${selected.length} 个缓存？`, function () {
+      hide_confirm_modal();
+      ajax_post("delete_chrome_cache", { dir_names: selected }, function (ret) {
+        if (ret.code === 0 || ret.code === 2) {
+          show_success_modal(ret.msg);
+          refresh_chrome_cache();
+        } else {
+          show_fail_modal(ret.msg || "删除失败");
+        }
+      }, true, false);
+    });
+  }
+
+  function delete_all_chrome_cache() {
+    const totalCount = ChromeCacheList.length;
+    if (totalCount === 0) {
+      show_fail_modal("没有可删除的缓存");
+      return;
+    }
+
+    show_confirm_modal(`确认清空全部 ${totalCount} 个缓存？正在使用中的缓存将被跳过。`, function () {
+      hide_confirm_modal();
+      ajax_post("delete_chrome_cache", { all: true }, function (ret) {
+        if (ret.code === 0 || ret.code === 2) {
+          show_success_modal(ret.msg);
+          refresh_chrome_cache();
+        } else {
+          show_fail_modal(ret.msg || "删除失败");
+        }
+      }, true, false);
+    });
+  }
+
+  // 绑定筛选事件
+  $(document).on('input', '#chrome_cache_filter', function () {
+    ChromeCacheFilterText = ($(this).val() || '').toLowerCase();
+    render_chrome_cache();
+  });
+
+  // 日期筛选事件
+  $(document).on('change', '#chrome_cache_created_start', function () {
+    ChromeCacheCreatedStart = $(this).val() || null;
+    render_chrome_cache();
+  });
+  $(document).on('change', '#chrome_cache_created_end', function () {
+    ChromeCacheCreatedEnd = $(this).val() || null;
+    render_chrome_cache();
+  });
+  $(document).on('change', '#chrome_cache_access_start', function () {
+    ChromeCacheAccessStart = $(this).val() || null;
+    render_chrome_cache();
+  });
+  $(document).on('change', '#chrome_cache_access_end', function () {
+    ChromeCacheAccessEnd = $(this).val() || null;
+    render_chrome_cache();
+  });
+
+  function clear_chrome_cache_date_filter() {
+    ChromeCacheCreatedStart = null;
+    ChromeCacheCreatedEnd = null;
+    ChromeCacheAccessStart = null;
+    ChromeCacheAccessEnd = null;
+    $('#chrome_cache_created_start').val('');
+    $('#chrome_cache_created_end').val('');
+    $('#chrome_cache_access_start').val('');
+    $('#chrome_cache_access_end').val('');
+    render_chrome_cache();
+  }
+  // ========== 仿真缓存管理结束 ==========
 
   // 初始化DropZone
   backup_dropzone = new Dropzone("#back_file");

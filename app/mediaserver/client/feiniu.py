@@ -812,6 +812,37 @@ class FeiNiu(_IMediaClient):
         # 飞牛影视暂不支持Webhook
         return None
 
+    def get_image_headers(self, url: str) -> Optional[dict]:
+        """
+        获取访问图片所需的认证Header
+        :param url: 图片URL
+        :return: 包含认证信息的Header字典
+        """
+        if not self.is_authenticated():
+            # 尝试连接
+            if not self.get_status():
+                return None
+        
+        # 检查URL是否属于本服务器
+        if not url or self._host not in url:
+            return None
+        
+        # 从URL中提取API路径用于签名
+        try:
+            # URL格式: {host}/api/v1/sys/img/{path}
+            api_path = url.replace(self._host, "")  # 获取 /api/v1/... 部分
+            if not api_path:
+                return None
+            
+            return {
+                "User-Agent": "NAS-Tools",
+                "Authorization": self._token,
+                "authx": self.__get_authx(api_path, None)
+            }
+        except Exception as e:
+            log.error(f"【{self.client_name}】获取图片Header失败：{str(e)}")
+            return None
+
     def get_iteminfo(self, itemid):
         """根据ItemId查询项目详情"""
         if not self.is_authenticated():

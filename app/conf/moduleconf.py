@@ -973,14 +973,6 @@ class ModuleConf(object):
                     "tooltip": "配置播放设备的访问地址，用于媒体详情页跳转播放页面；如为https则需要增加https://前缀，留空则默认与服务器地址一致",
                     "type": "text",
                     "placeholder": "http://127.0.0.1:5666"
-                },
-                "sync_libraries": {
-                    "id": "feiniu.sync_libraries",
-                    "required": False,
-                    "title": "同步媒体库",
-                    "tooltip": "指定要同步的媒体库ID，多个用英文逗号分隔，留空或填写'all'表示同步所有媒体库",
-                    "type": "text",
-                    "placeholder": "all"
                 }
             }
         },

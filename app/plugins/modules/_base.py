@@ -134,6 +134,34 @@ class _IPluginModule(metaclass=ABCMeta):
                                          key=key,
                                          value=value)
 
+    def clean_old_history(self, days=30, max_count=50):
+        """
+        清理旧的历史记录
+        :param days: 保留最近多少天的记录
+        :param max_count: 最多保留多少条记录
+        """
+        plugin_id = self.__class__.__name__
+        db_helper = DbHelper()
+        
+        # 计算截止日期
+        from datetime import datetime, timedelta
+        cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 删除超过指定天数的记录
+        deleted_count = db_helper.delete_plugin_history_by_date(plugin_id, cutoff_date)
+        if deleted_count > 0:
+            self.debug(f"已清理 {deleted_count} 条超过 {days} 天的历史记录")
+        
+        # 如果记录数仍然超过最大数量，删除最旧的记录
+        current_count = db_helper.get_plugin_history_count(plugin_id)
+        if current_count > max_count:
+            excess_count = current_count - max_count
+            oldest_records = db_helper.get_plugin_history_oldest(plugin_id, limit=excess_count)
+            for record in oldest_records:
+                db_helper.delete_plugin_history(plugin_id, record.KEY)
+            if oldest_records:
+                self.debug(f"已清理 {len(oldest_records)} 条最旧的历史记录，当前记录数：{current_count - len(oldest_records)}")
+
     def get_history(self, key=None, plugin_id=None):
         """
         获取插件运行数据，只返回一条，自动识别转换为对象
@@ -142,6 +170,8 @@ class _IPluginModule(metaclass=ABCMeta):
             plugin_id = self.__class__.__name__
 
         historys = DbHelper().get_plugin_history(plugin_id=plugin_id, key=key)
+        if historys is None:
+            return None if key else []
         if not isinstance(historys, list):
             historys = [historys]
         result = []

@@ -1,9 +1,10 @@
 import json
 from datetime import datetime
 from multiprocessing.dummy import Pool as ThreadPool
-from threading import Lock, Condition
+from threading import Lock, Condition, Thread
 import re
 import json
+import time
 from urllib.parse import urlparse, urlunparse
 
 import requests
@@ -26,8 +27,11 @@ class SiteUserInfo(object):
     message = None
 
     _MAX_CONCURRENCY = 10
+    _SITE_TASK_TIMEOUT = 600
+    _WAIT_UPDATE_TIMEOUT = 600
     _last_update_time = None
     _sites_data = {}
+    _SUPPRESS_NOTIFY_WINDOW = 60
 
     def __init__(self):
         self.is_updating = False
@@ -48,6 +52,20 @@ class SiteUserInfo(object):
         self._last_update_time = None
         # 站点数据
         self._sites_data = {}
+        self._last_suppress_notify_ts = 0
+        try:
+            app_cfg = Config().get_config('app') or {}
+            site_task_timeout = app_cfg.get('site_stat_task_timeout')
+            wait_update_timeout = app_cfg.get('site_stat_wait_timeout')
+            suppress_window = app_cfg.get('site_stat_suppress_notify_window')
+            if site_task_timeout is not None and str(site_task_timeout).strip() != "":
+                self._SITE_TASK_TIMEOUT = int(float(site_task_timeout))
+            if wait_update_timeout is not None and str(wait_update_timeout).strip() != "":
+                self._WAIT_UPDATE_TIMEOUT = int(float(wait_update_timeout))
+            if suppress_window is not None and str(suppress_window).strip() != "":
+                self._SUPPRESS_NOTIFY_WINDOW = int(float(suppress_window))
+        except Exception as _:
+            pass
 
     def __build_class(self, html_text):
         for site_schema in self._site_schema:
@@ -74,7 +92,12 @@ class SiteUserInfo(object):
         # 检测环境，有浏览器内核的优先使用仿真签到
         chrome = ChromeHelper()
         if emulate and chrome.get_status():
-            if not await chrome.visit(url=url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, proxy=proxy):
+            # 获取站点域名用于Profile管理
+            site_domain = urlparse(url).netloc
+            
+            # 首先尝试使用已保存的浏览器数据（preserve_data=True）
+            if not await chrome.visit(url=url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, 
+                                       proxy=proxy, site_domain=site_domain, preserve_data=True):
                 log.error("【Sites】%s 无法打开网站" % site_name)
                 return None
             # 循环检测是否过cf
@@ -84,7 +107,24 @@ class SiteUserInfo(object):
                 return None
             logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
             html_text = await chrome.get_html()
-            if logged_in and site_local_storage:
+            
+            # 如果登录失败，尝试注入新的cookie/localStorage
+            if not logged_in:
+                log.debug(f"【Sites】站点 {site_name} 使用缓存数据未登录，尝试注入新凭据")
+                if await chrome.inject_credentials(url, cookie=site_cookie, local_storage=site_local_storage):
+                    logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+                    html_text = await chrome.get_html()
+            
+            if not logged_in:
+                log.error("【Sites】%s 站点未登录" % site_name)
+                return None
+            logged_in = SiteHelper.is_logged_in(html_text)
+            if not logged_in:
+                log.error("【Sites】%s 站点未登录2" % site_name)
+                return None
+            
+            # 登录成功，更新保存的cookie和localStorage
+            if site_local_storage:
                 local_storage = await chrome.get_local_storage()
                 self.sites.update_site_local_storage(siteid=site_id, local_storage=local_storage)
         else:
@@ -92,7 +132,8 @@ class SiteUserInfo(object):
             res = RequestUtils(cookies=site_cookie,
                                session=session,
                                headers=ua,
-                               proxies=proxies
+                               proxies=proxies,
+                               timeout=(10, 20)
                                ).get_res(url=url)
             if res and res.status_code == 200:
                 if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
@@ -110,7 +151,8 @@ class SiteUserInfo(object):
                     res = RequestUtils(cookies=site_cookie,
                                        session=session,
                                        headers=ua,
-                                       proxies=proxies
+                                       proxies=proxies,
+                                       timeout=(10, 20)
                                        ).get_res(url=tmp_url)
                     if res and res.status_code == 200:
                         if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
@@ -129,7 +171,8 @@ class SiteUserInfo(object):
                     res = RequestUtils(cookies=site_cookie,
                                        session=session,
                                        headers=ua,
-                                       proxies=proxies
+                                       proxies=proxies,
+                                       timeout=(10, 20)
                                        ).get_res(url=url + "/index.php")
                     if res and res.status_code == 200:
                         if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
@@ -182,7 +225,8 @@ class SiteUserInfo(object):
             res = RequestUtils(cookies=site_cookie,
                                session=requests.Session(),
                                headers=ua,
-                               proxies=proxies
+                               proxies=proxies,
+                               timeout=(10, 20)
                                ).get_res(url=site_url)
             if res and res.status_code == 200:
                 try:
@@ -317,6 +361,14 @@ class SiteUserInfo(object):
         self.__refresh_all_site_data(force=force, specify_sites=specify_sites)
         return self._sites_data
 
+    def get_cached_site_data(self):
+        return dict(self._sites_data)
+
+    def trigger_refresh(self, specify_sites=None, force=False):
+        t = Thread(target=self.__refresh_all_site_data, args=(force, specify_sites))
+        t.daemon = True
+        t.start()
+
     def __refresh_all_site_data(self, force=False, specify_sites=None):
         """
         多线程刷新站点下载上传量，默认间隔6小时
@@ -343,41 +395,73 @@ class SiteUserInfo(object):
         if not refresh_sites:
             return
         
+        suppressed = False
+        notify = False
         with self.lock:
             if self.is_updating:
-                while self.is_updating:
-                    self.lock.wait()
-                return
-            self.is_updating = True
+                suppressed = True
+                now = time.time()
+                last_ts = getattr(self, "_last_suppress_notify_ts", 0)
+                window = getattr(self, "_SUPPRESS_NOTIFY_WINDOW", 60)
+                if now - last_ts >= window:
+                    self._last_suppress_notify_ts = now
+                    notify = True
+            else:
+                self.is_updating = True
+
+        if suppressed:
+            if notify:
+                try:
+                    self.message.send_site_message(title="站点数据正在刷新中，请稍后...")
+                except Exception as e:
+                    log.debug(f"【Sites】刷新抑制消息发送失败：{e}")
+            return
 
         site_user_infos = []
         try:
             with ThreadPool(min(len(refresh_sites), self._MAX_CONCURRENCY)) as pool:
-                results = pool.map(lambda site: asyncio.run(self.__refresh_site_data(site)), refresh_sites)
+                def _task(site):
+                    for i in range(2):
+                        try:
+                            ret = asyncio.run(asyncio.wait_for(self.__refresh_site_data(site), timeout=self._SITE_TASK_TIMEOUT))
+                            if ret:
+                                return ret
+                        except Exception as ex:
+                            try:
+                                site_name = site.get("name")
+                            except Exception:
+                                site_name = ""
+                            if i == 0:
+                                log.error(f"【Sites】站点 {site_name} 刷新超时或异常：{ex}，重试一次")
+                            else:
+                                log.error(f"【Sites】站点 {site_name} 重试失败：{ex}")
+                    return None
+
+                results = pool.map(_task, refresh_sites)
 
                 site_user_infos = [result for result in results if result]
                 site_user_infos = [info for info in site_user_infos if info is not None]
+
+            # 登记历史数据
+            self.dbhelper.insert_site_statistics_history(site_user_infos)
+            # 实时用户数据
+            self.dbhelper.update_site_user_statistics(site_user_infos)
+            # 更新站点图标
+            self.dbhelper.update_site_favicon(site_user_infos)
+            # 实时做种信息
+            self.dbhelper.update_site_seed_info(site_user_infos)
+            # 站点图标重新加载
+            self.sites.init_favicons()
+
+            # 更新时间（所有数据持久化后再更新）
+            self._last_update_time = datetime.now()
         except Exception as e:
             log.error(f"An error occurred: {e}")
         finally:
-            # 重置状态
+            # 重置状态（最后一步）
             with self.lock:
                 self.is_updating = False
                 self.lock.notify_all()
-
-        # 登记历史数据
-        self.dbhelper.insert_site_statistics_history(site_user_infos)
-        # 实时用户数据
-        self.dbhelper.update_site_user_statistics(site_user_infos)
-        # 更新站点图标
-        self.dbhelper.update_site_favicon(site_user_infos)
-        # 实时做种信息
-        self.dbhelper.update_site_seed_info(site_user_infos)
-        # 站点图标重新加载
-        self.sites.init_favicons()
-
-        # 更新时间
-        self._last_update_time = datetime.now()
 
     def get_pt_site_statistics_history(self, days=7, end_day=None):
         """

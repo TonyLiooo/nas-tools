@@ -16,6 +16,7 @@ import ast
 import copy
 
 import cn2an
+import psutil
 from flask_login import logout_user, current_user
 from werkzeug.security import generate_password_hash
 
@@ -33,6 +34,7 @@ from app.media import Category, Media, Bangumi, DouBan, Scraper
 from app.media.meta import MetaInfo, MetaBase
 from app.mediaserver import MediaServer
 from app.message import Message, MessageCenter
+from app.message.client.wechat import WeChat
 from app.plugins import PluginManager, EventManager
 from app.rss import Rss
 from app.rsschecker import RssChecker
@@ -51,12 +53,16 @@ from config import RMT_MEDIAEXT, RMT_SUBEXT, RMT_AUDIO_TRACK_EXT, Config
 from web.backend.search_torrents import search_medias_for_web, search_media_by_message
 from web.backend.pro_user import ProUser
 from web.backend.web_utils import WebUtils
+from app.db.main_db import remove_session as remove_main_session
+from app.db.media_db import remove_session as remove_media_session
 
 import asyncio
+import uuid
 
 class WebAction:
     _actions = {}
     _commands = {}
+    _site_test_tasks = {}
 
     def __init__(self):
         # WEB请求响应
@@ -180,6 +186,8 @@ class WebAction:
             "get_filterrules": self.get_filterrules,
             "get_downloading": self.get_downloading,
             "test_site": self.__test_site,
+            "start_test_site": self.__start_test_site,
+            "get_test_site": self.__get_test_site,
             "get_sub_path": self.__get_sub_path,
             "get_filehardlinks": self.__get_filehardlinks,
             "get_dirhardlink": self.__get_dirhardlink,
@@ -243,8 +251,18 @@ class WebAction:
             "update_category_config": self.update_category_config,
             "get_category_config": self.get_category_config,
             "get_system_processes": self.get_system_processes,
+            "kill_process": self.kill_process,
+            "get_chrome_cache_list": self.get_chrome_cache_list,
+            "delete_chrome_cache": self.delete_chrome_cache,
             "run_plugin_method": self.run_plugin_method,
             "get_library_resume": self.__get_resume,
+            # WeCom Menu management
+            "get_wecom_menu": self.__get_wecom_menu,
+            "set_wecom_menu": self.__set_wecom_menu,
+            "reset_wecom_menu": self.__reset_wecom_menu,
+            "publish_wecom_menu": self.__publish_wecom_menu,
+            "delete_wechat_menu": self.__delete_wechat_menu,
+            "get_wechat_menu_remote": self.__get_wechat_menu_remote,
         }
         # 远程命令响应
         self._commands = {
@@ -322,6 +340,8 @@ class WebAction:
         PluginManager().stop_service()
         # 关闭浏览器
         ChromeHelper.kill_chrome_processes()
+        remove_main_session()
+        remove_media_session()
 
     @staticmethod
     def start_service():
@@ -368,6 +388,204 @@ class WebAction:
                 os.system("pm2 restart NAStool")
             else:
                 os.system("pkill -f 'python3 run.py'")
+
+    @staticmethod
+    def __wecom_default_menu():
+        """
+        Build a default WeCom menu from ModuleConf.WECHAT_MENU mapping.
+        Group by top index in keys like _0_0, _1_0 ...
+        """
+        # ModuleConf.WECHAT_MENU: key_id => cmd
+        keymap = ModuleConf.WECHAT_MENU or {}
+        # group by top index
+        groups = {}
+        for kid, cmd in keymap.items():
+            try:
+                parts = str(kid).strip('_').split('_')
+                top = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
+                sub = int(parts[1]) if len(parts) > 1 and str(parts[1]).isdigit() else 0
+            except Exception:
+                top, sub = 0, 0
+            if top not in groups:
+                groups[top] = []
+            groups[top].append((sub, kid, cmd))
+        # sort and build buttons
+        buttons = []
+        top_names = {0: "下载", 1: "同步", 2: "管理"}
+        name_map = {
+            "/ptt": "下载转移",
+            "/ptr": "自动删种",
+            "/rss": "RSS订阅",
+            "/ssa": "订阅搜索",
+            "/rst": "目录同步",
+            "/db": "豆瓣同步",
+            "/utf": "重新识别",
+            "/pts": "PT签到",
+            "/udt": "系统更新",
+            "/tbl": "清理转移缓存",
+            "/trh": "清理RSS缓存",
+            "/sta": "站点数据统计",
+            "/cks": "Cookie同步",
+            "/cf": "CF优选",
+            "/bak": "备份数据",
+        }
+        for top in sorted(groups.keys()):
+            subs = sorted(groups[top], key=lambda x: x[0])
+            sub_buttons = []
+            for _, kid, cmd in subs:
+                # name fallback from command desc
+                name = WebAction().__command_desc(cmd) or name_map.get(cmd)
+                sub_buttons.append({
+                    "name": name or kid,
+                    "cmd": cmd,
+                    "key": kid
+                })
+            buttons.append({
+                "name": top_names.get(top, f"菜单{top + 1}"),
+                "sub_buttons": sub_buttons
+            })
+        return {"buttons": buttons}
+
+    @staticmethod
+    def __command_desc(cmd: str):
+        try:
+            # Search combined command list (core + plugins)
+            for item in WebAction().get_commands():
+                if item.get("id") == cmd:
+                    return item.get("name")
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def __get_wecom_menu(_: dict = None):
+        """
+        Get stored WeCom menu from SystemConfig or build default from ModuleConf.WECHAT_MENU
+        """
+        menu = SystemConfig().get(SystemConfigKey.WeComMenu)
+        if not menu:
+            menu = WebAction.__wecom_default_menu()
+        # enrich with original desc for UI
+        for btn in menu.get("buttons", []) or []:
+            for sub in btn.get("sub_buttons", []) or []:
+                sub["origin"] = WebAction.__command_desc(sub.get("cmd")) or ""
+            # top-level without sub_buttons could be clickable; ensure fields exist
+            if not btn.get("sub_buttons") and btn.get("cmd"):
+                btn["origin"] = WebAction.__command_desc(btn.get("cmd")) or ""
+        # also return commands for UI
+        commands = WebAction().get_commands()
+        return {"code": 0, "menu": menu, "commands": commands}
+
+    @staticmethod
+    def __set_wecom_menu(data: dict):
+        """
+        Save WeCom menu and key-map to SystemConfig
+        data: {menu: {...}}
+        """
+        menu = data.get("menu")
+        if isinstance(menu, str):
+            try:
+                menu = json.loads(menu)
+            except Exception:
+                return {"code": 1, "msg": "菜单数据不合法"}
+        if not isinstance(menu, dict):
+            return {"code": 1, "msg": "菜单数据不合法"}
+        # build key map
+        keymap = {}
+        for btn in menu.get("buttons", []) or []:
+            if btn.get("sub_buttons"):
+                for sub in btn.get("sub_buttons", []) or []:
+                    if sub.get("key") and sub.get("cmd"):
+                        keymap[sub.get("key")] = sub.get("cmd")
+            else:
+                if btn.get("key") and btn.get("cmd"):
+                    keymap[btn.get("key")] = btn.get("cmd")
+        SystemConfig().set(SystemConfigKey.WeComMenu, menu)
+        SystemConfig().set(SystemConfigKey.WeComMenuKeyMap, keymap)
+        return {"code": 0}
+
+    @staticmethod
+    def __wechat_client_from_config():
+        """Build a WeChat client using stored message client config."""
+        # Prefer interactive client
+        interactive = Message().get_interactive_client(SearchType.WX)
+        if interactive and interactive.get("client"):
+            return interactive.get("client")
+        # Fallback to any wechat client config
+        clients = Message().get_message_client_info() or {}
+        for _, c in clients.items():
+            if c.get("type") == "wechat" and c.get("config"):
+                try:
+                    return WeChat(c.get("config"))
+                except Exception:
+                    continue
+        return None
+
+    @staticmethod
+    def __publish_wecom_menu(_: dict):
+        """Publish stored WeCom menu to WeChat Work via API"""
+        client = WebAction.__wechat_client_from_config()
+        if not client:
+            return {"code": 1, "msg": "未找到可用的微信客户端配置"}
+        menu = SystemConfig().get(SystemConfigKey.WeComMenu)
+        if not menu:
+            return {"code": 1, "msg": "未找到已保存的菜单配置，请先保存菜单"}
+        # transform to WeChat format
+        def build_button(btn):
+            if btn.get("sub_buttons"):
+                return {
+                    "name": btn.get("name") or "菜单",
+                    "sub_button": [
+                        {"type": "click", "name": sub.get("name"), "key": f"nastool#menu#{sub.get('key')}"}
+                        for sub in (btn.get("sub_buttons") or []) if sub.get("name") and sub.get("key")
+                    ]
+                }
+            else:
+                if btn.get("name") and btn.get("key"):
+                    return {"type": "click", "name": btn.get("name"), "key": f"nastool#menu#{btn.get('key')}"}
+                else:
+                    return None
+        wechat_menu = {"button": []}
+        for b in menu.get("buttons", []) or []:
+            built = build_button(b)
+            if built:
+                wechat_menu["button"].append(built)
+        ok, msg = client.create_menu(wechat_menu)
+        if ok:
+            return {"code": 0, "msg": msg}
+        else:
+            return {"code": 1, "msg": msg}
+
+    @staticmethod
+    def __delete_wechat_menu(_: dict):
+        client = WebAction.__wechat_client_from_config()
+        if not client:
+            return {"code": 1, "msg": "未找到可用的微信客户端配置"}
+        ok, msg = client.delete_menu()
+        return {"code": 0 if ok else 1, "msg": msg}
+
+    @staticmethod
+    def __get_wechat_menu_remote(_: dict):
+        client = WebAction.__wechat_client_from_config()
+        if not client:
+            return {"code": 1, "msg": "未找到可用的微信客户端配置"}
+        ok, data = client.get_menu()
+        if ok:
+            return {"code": 0, "data": data}
+        else:
+            # 统一转换为字符串，避免前端出现 [object Object]
+            if isinstance(data, dict):
+                msg = data.get("errmsg") or json.dumps(data, ensure_ascii=False)
+            else:
+                msg = str(data)
+            return {"code": 1, "msg": msg}
+
+    @staticmethod
+    def __reset_wecom_menu(_: dict):
+        menu = WebAction.__wecom_default_menu()
+        # Save and rebuild keymap from defaults
+        WebAction.__set_wecom_menu({"menu": menu})
+        return {"code": 0, "menu": menu}
 
     def handle_message_job(self, msg, in_from=SearchType.OT, user_id=None, user_name=None):
         """
@@ -4168,6 +4386,45 @@ class WebAction:
         code = 0 if flag else -1
         return {"code": code, "msg": msg, "time": times}
 
+    def __start_test_site(self, data):
+        """
+        启动站点连通性测试任务（后台执行）
+        """
+        site_id = data.get("id")
+        if not site_id:
+            return {"code": -1, "msg": "参数错误"}
+        task_id = str(uuid.uuid4())
+        WebAction._site_test_tasks[task_id] = {"status": "pending", "site_id": site_id, "result": None, "time": 0}
+
+        def runner():
+            WebAction._site_test_tasks[task_id]["status"] = "running"
+            try:
+                flag, msg, times, _ = asyncio.run(Sites().test_connection(site_id))
+                code = 0 if flag else -1
+                WebAction._site_test_tasks[task_id]["result"] = {"code": code, "msg": msg, "time": times}
+                WebAction._site_test_tasks[task_id]["time"] = times
+                WebAction._site_test_tasks[task_id]["status"] = "done"
+            except Exception as e:
+                WebAction._site_test_tasks[task_id]["result"] = {"code": -1, "msg": str(e), "time": 0}
+                WebAction._site_test_tasks[task_id]["status"] = "error"
+
+        ThreadHelper().start_thread(runner, ())
+        return {"code": 0, "task_id": task_id}
+
+    def __get_test_site(self, data):
+        """
+        查询站点连通性测试任务状态
+        """
+        task_id = data.get("task_id")
+        task = WebAction._site_test_tasks.get(task_id)
+        if not task:
+            return {"code": -1, "msg": "任务不存在"}
+        status = task.get("status")
+        if status in ("done", "error"):
+            result = task.get("result") or {"code": -1, "msg": "无结果", "time": 0}
+            return result
+        return {"code": 1, "msg": "运行中"}
+
     @staticmethod
     def __get_sub_path(data):
         """
@@ -5427,6 +5684,95 @@ class WebAction:
         获取系统进程
         """
         return {"code": 0, "data": SystemUtils.get_all_processes()}
+
+    @staticmethod
+    def kill_process(data: dict):
+        """
+        结束指定PID的进程（先优雅终止，失败再强制kill）
+        """
+        try:
+            if not getattr(current_user, "is_authenticated", False) or getattr(current_user, "admin", 0) != 1:
+                return {"code": 1, "msg": "只有管理员才可以结束进程"}
+            pid = data.get("pid")
+            if pid is None:
+                return {"code": 1, "msg": "缺少PID参数"}
+            try:
+                pid = int(pid)
+            except Exception:
+                return {"code": 1, "msg": "非法PID"}
+            # 安全保护：禁止杀1号进程和当前进程
+            if pid <= 1 or pid == os.getpid():
+                return {"code": 1, "msg": "不允许结束该进程"}
+            if not psutil.pid_exists(pid):
+                return {"code": 1, "msg": "进程不存在"}
+            p = psutil.Process(pid)
+            # 尝试优雅终止
+            try:
+                p.terminate()
+                p.wait(timeout=3)
+                return {"code": 0}
+            except psutil.TimeoutExpired:
+                try:
+                    p.kill()
+                    p.wait(timeout=2)
+                    return {"code": 0}
+                except Exception as e:
+                    return {"code": 1, "msg": str(e)}
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                return {"code": 1, "msg": str(e)}
+        except Exception as e:
+            ExceptionUtils.exception_traceback(e)
+            return {"code": 1, "msg": "结束进程失败"}
+
+    @staticmethod
+    def get_chrome_cache_list():
+        """
+        获取浏览器仿真缓存列表
+        """
+        try:
+            profiles = ChromeHelper.get_site_profile_list()
+            return {"code": 0, "data": profiles}
+        except Exception as e:
+            ExceptionUtils.exception_traceback(e)
+            return {"code": 1, "msg": str(e)}
+
+    @staticmethod
+    def delete_chrome_cache(data: dict):
+        """
+        删除指定的浏览器仿真缓存
+        :param data: {'dir_names': ['xxx', 'yyy']} 或 {'all': True} 删除全部
+        """
+        try:
+            if not getattr(current_user, "is_authenticated", False) or getattr(current_user, "admin", 0) != 1:
+                return {"code": 1, "msg": "只有管理员才可以删除缓存"}
+            
+            if data.get("all"):
+                result = ChromeHelper.delete_all_site_profiles()
+            else:
+                dir_names = data.get("dir_names", [])
+                if not dir_names:
+                    return {"code": 1, "msg": "缺少要删除的缓存目录"}
+                result = ChromeHelper.delete_site_profiles(dir_names)
+            
+            msg_parts = []
+            if result['success'] > 0:
+                msg_parts.append(f"成功删除 {result['success']} 个")
+            if result['locked'] > 0:
+                msg_parts.append(f"{result['locked']} 个正在使用")
+            if result['failed'] > 0:
+                msg_parts.append(f"{result['failed']} 个删除失败")
+            
+            msg = "，".join(msg_parts) if msg_parts else "无缓存可删除"
+            
+            if result['success'] > 0:
+                return {"code": 0, "msg": msg}
+            elif result['locked'] > 0:
+                return {"code": 2, "msg": msg}  # 部分成功
+            else:
+                return {"code": 1, "msg": msg}
+        except Exception as e:
+            ExceptionUtils.exception_traceback(e)
+            return {"code": 1, "msg": str(e)}
 
     @staticmethod
     def run_plugin_method(data):

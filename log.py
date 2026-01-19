@@ -95,6 +95,7 @@ def __append_log_queue(level, text):
 
 
 def debug(text, module=None):
+    __append_log_queue("DEBUG", text)
     return Logger.get_instance(module).logger.debug(text)
 
 

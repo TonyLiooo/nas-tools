@@ -83,24 +83,68 @@ class SiteHelper:
             return False
         except (json.JSONDecodeError, TypeError, AttributeError):
             return False
-    
+
+    @classmethod
+    def is_tnode(cls, html_text):
+        """
+        判断页面是否为 TNode 框架页面（先判断是否 TNode）
+        依据：是否包含 'Powered By TNode' 文案（大小写不敏感）
+        """
+        try:
+            if not html_text:
+                return False
+            return 'powered by tnode' in str(html_text).lower()
+        except Exception:
+            return False
+
+    @classmethod
+    def extract_csrf_token(cls, html_text):
+        """
+        提取 TNode 页中的 CSRF Token（<meta name="x-csrf-token" ...>）
+        返回 token 字符串，如不存在返回 None
+        """
+        if not html_text:
+            return None
+        try:
+            html = etree.HTML(html_text)
+            if html is not None:
+                tokens = html.xpath("//meta[translate(@name,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='x-csrf-token']/@content")
+                if tokens and tokens[0].strip():
+                    return tokens[0].strip()
+        except Exception:
+            pass
+        try:
+            m = re.search(r'<meta\s+name=["\']x-csrf-token["\']\s+content=["\']([^"\']+)["\']', html_text, re.I)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+        return None
     @staticmethod
-    async def wait_for_logged_in(tab:Tab, timeout=30):
+    async def wait_for_logged_in(tab: Tab, timeout=30, poll_interval=1.0):
         """
         等待页面登录完成
         :param tab: nodriver tab对象
         :param timeout: 最大等待时间（秒）
+        :param poll_interval: 轮询间隔（秒）
         :return: bool
         """
-        end_time = asyncio.get_event_loop().time() + timeout
-        while True:
-            html_text = await tab.get_content()
-            if SiteHelper.is_logged_in(html_text):
-                await asyncio.sleep(1)
-                return True
-            if asyncio.get_event_loop().time() > end_time:
-                return False
-            await asyncio.sleep(1)
+        async def _poll_until_logged_in():
+            while True:
+                try:
+                    html_text = await tab.get_content()
+                except Exception:
+                    await asyncio.sleep(poll_interval)
+                    continue
+                if SiteHelper.is_logged_in(html_text):
+                    await asyncio.sleep(poll_interval)
+                    return True
+                await asyncio.sleep(poll_interval)
+
+        try:
+            return await asyncio.wait_for(_poll_until_logged_in(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return False
             
 
     @staticmethod

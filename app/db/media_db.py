@@ -4,9 +4,10 @@ import threading
 import time
 
 from cachetools import cached, TTLCache
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import NullPool
+from sqlalchemy.exc import OperationalError
 
 from app.db.models import BaseMedia, MEDIASYNCITEMS, MEDIASYNCSTATISTIC
 from app.utils import ExceptionUtils
@@ -14,17 +15,25 @@ from config import Config
 
 lock = threading.Lock()
 _Engine = create_engine(
-    f"sqlite:///{os.path.join(Config().get_config_path(), 'media.db')}?check_same_thread=False",
+    f"sqlite:///{os.path.join(Config().get_config_path(), 'media.db')}",
     echo=False,
-    poolclass=QueuePool,
+    poolclass=NullPool,
     pool_pre_ping=True,
-    pool_size=100,
-    pool_recycle=60 * 10,
-    max_overflow=0
+    connect_args={"check_same_thread": False, "timeout": 30}
 )
 _Session = scoped_session(sessionmaker(bind=_Engine,
                                        autoflush=True,
                                        autocommit=False))
+
+
+@event.listens_for(_Engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+    cursor.execute("PRAGMA busy_timeout=30000;")
+    cursor.execute("PRAGMA foreign_keys=ON;")
+    cursor.close()
 
 
 class MediaDb:
@@ -37,6 +46,23 @@ class MediaDb:
     def init_db():
         with lock:
             BaseMedia.metadata.create_all(_Engine)
+
+    def commit(self, retries=5, backoff=0.1):
+        last_exc = None
+        for i in range(retries):
+            try:
+                self.session.commit()
+                return
+            except OperationalError as e:
+                msg = str(getattr(e, "orig", e))
+                if "database is locked" in msg or "database is busy" in msg:
+                    self.session.rollback()
+                    time.sleep(backoff * (2 ** i))
+                    last_exc = e
+                    continue
+                raise
+        if last_exc:
+            raise last_exc
 
     def insert(self, server_type, iteminfo, seasoninfo):
         if not server_type or not iteminfo:
@@ -58,7 +84,7 @@ class MediaDb:
                 PATH=iteminfo.get("path"),
                 JSON=json.dumps(seasoninfo)
             ))
-            self.session.commit()
+            self.commit()
             return True
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
@@ -74,7 +100,7 @@ class MediaDb:
                 self.session.query(MEDIASYNCITEMS).filter(MEDIASYNCITEMS.SERVER == server_type).delete()
             else:
                 self.session.query(MEDIASYNCITEMS).delete()
-            self.session.commit()
+            self.commit()
             return True
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
@@ -95,7 +121,7 @@ class MediaDb:
                 UPDATE_TIME=time.strftime('%Y-%m-%d %H:%M:%S',
                                           time.localtime(time.time()))
             ))
-            self.session.commit()
+            self.commit()
             return True
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
@@ -129,3 +155,7 @@ class MediaDb:
         if not server_type:
             return None
         return self.session.query(MEDIASYNCSTATISTIC).filter(MEDIASYNCSTATISTIC.SERVER == server_type).first()
+
+
+def remove_session():
+    _Session.remove()
