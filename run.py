@@ -2,6 +2,15 @@ import os
 import signal
 import sys
 import warnings
+import subprocess
+
+# 确保 feapder 已安装
+try:
+    import feapder
+except ImportError:
+    print("[INFO] 检测到 feapder 未安装，正在安装...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "feapder==1.9.2", "--no-deps", "-q"])
+    print("[INFO] feapder 安装成功")
 
 warnings.filterwarnings('ignore')
 
