@@ -124,6 +124,25 @@ function requirements_update {
 
 }
 
+# feapder检查 - 确保feapder已安装
+function feapder_check {
+
+    if ! python -c "import feapder" 2>/dev/null; then
+        INFO "检测到feapder未安装，正在安装..."
+        if [ "${NASTOOL_CN_UPDATE}" = "true" ]; then
+            pip install feapder==1.9.2 --no-deps -i "${PYPI_MIRROR}"
+        else
+            pip install feapder==1.9.2 --no-deps
+        fi
+        if [ $? -ne 0 ]; then
+            ERROR "无法安装feapder，请更新镜像！"
+        else
+            INFO "feapder安装成功"
+        fi
+    fi
+
+}
+
 # third_party更新
 function third_party_update {
 
@@ -176,6 +195,8 @@ if [ "${NASTOOL_AUTO_UPDATE}" = "true" ]; then
         package_update
         # Python依赖包更新
         requirements_update
+        # feapder 检查
+        feapder_check
         # third_party 更新
         third_party_update
     else
