@@ -106,10 +106,12 @@ function requirements_update {
             apk add --no-cache libffi-dev gcc musl-dev libxml2-dev libxslt-dev
             pip install --upgrade pip setuptools wheel -i "${PYPI_MIRROR}"
             pip install -r requirements.txt -i "${PYPI_MIRROR}"
+            pip install feapder==1.9.2 --no-deps -i "${PYPI_MIRROR}"
         else
             apk add --no-cache libffi-dev gcc musl-dev libxml2-dev libxslt-dev
             pip install --upgrade pip setuptools wheel
             pip install -r requirements.txt
+            pip install feapder==1.9.2 --no-deps
         fi
         if [ $? -ne 0 ]; then
             ERROR "无法安装依赖，请更新镜像！"
