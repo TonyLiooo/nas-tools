@@ -1336,6 +1336,33 @@ class AutoSignIn(_IPluginModule):
                         if not logged_in:
                             self.warn("%s 仿真签到失败：未能检测到登录信息" % (site))
                             return f"【{site}】签到失败！"
+                        
+                        # 二次确认按钮选择器列表
+                        confirmation_selectors = [
+                            "//input[@type='submit' and @value='立即签到']",
+                        ]
+                        
+                        # 遍历选择器列表，尝试查找并点击存在的确认按钮
+                        for selector in confirmation_selectors:
+                            try:
+                                found, coordinates = await ChromeHelper.find_and_click_element(
+                                    tab=chrome._tab, 
+                                    selector=selector,
+                                    click_enabled=True,
+                                    timeout=3
+                                )
+                                if found:
+                                    self.debug(f"{site} 找到并点击了二次确认按钮: {selector}")
+                                    # 等待页面响应
+                                    await asyncio.sleep(1)
+                                    try:
+                                        await asyncio.wait_for(ChromeHelper.check_document_ready(chrome._tab), 20)
+                                    except asyncio.TimeoutError:
+                                        self.debug("Timeout waiting for the page")
+                                    break
+                            except Exception as e:
+                                self.debug(f"{site} 尝试选择器 {selector} 失败: {str(e)}")
+                                continue
                         # 判断是否已签到   [签到已得125, 补签卡: 0]
                         if re.search(r'已签|签到已得', await chrome.get_html(), re.IGNORECASE):
                             return f"【{site}】签到成功"

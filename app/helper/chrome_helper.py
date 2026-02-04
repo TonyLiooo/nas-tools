@@ -526,6 +526,70 @@ class ChromeHelper(object):
         Returns:
             str: The equivalent CSS selector.
         """
+        
+        def parse_single_condition(cond: str) -> str:
+            """Parse a single attribute condition and return CSS selector part"""
+            cond = cond.strip()
+            # Match @attr='value' or @attr="value"
+            attr_match = re.match(r"@([\w-]+)\s*=\s*[\"']([^\"']*)[\"']", cond)
+            if attr_match:
+                attr_name = attr_match.group(1)
+                attr_value = attr_match.group(2)
+                if attr_name == "id":
+                    return "#%s" % attr_value.replace(" ", "#")
+                elif attr_name == "class":
+                    return ".%s" % attr_value.replace(" ", ".")
+                else:
+                    if " " in attr_value:
+                        return '[%s="%s"]' % (attr_name, attr_value)
+                    else:
+                        return "[%s='%s']" % (attr_name, attr_value)
+            
+            # Match contains(@attr, 'value')
+            contains_match = re.match(r"contains\s*\(\s*@([\w-]+)\s*,\s*[\"']([^\"']*)[\"']\s*\)", cond)
+            if contains_match:
+                attr_name = contains_match.group(1)
+                attr_value = contains_match.group(2)
+                return "[%s*='%s']" % (attr_name, attr_value)
+            
+            # Match contains(text(), 'value') or contains(., 'value')
+            text_contains_match = re.match(r"contains\s*\(\s*(text\(\)|\.)\s*,\s*[\"']([^\"']*)[\"']\s*\)", cond)
+            if text_contains_match:
+                return ":contains(%s)" % text_contains_match.group(2)
+            
+            return ""
+        
+        def parse_bracket_conditions(bracket_content: str) -> str:
+            """Parse conditions inside brackets, handling 'and' operator"""
+            # Split by ' and ' (case insensitive)
+            conditions = re.split(r'\s+and\s+', bracket_content, flags=re.IGNORECASE)
+            css_parts = []
+            for cond in conditions:
+                css_part = parse_single_condition(cond.strip())
+                if css_part:
+                    css_parts.append(css_part)
+            return "".join(css_parts)
+
+        def parse_bracket_at_position(xpath_str: str, start_pos: int) -> tuple:
+            """Parse bracket content starting at given position, return (css_attr, end_pos)"""
+            if start_pos >= len(xpath_str) or xpath_str[start_pos] != '[':
+                return "", start_pos
+            
+            # Find matching closing bracket
+            bracket_depth = 0
+            end_pos = start_pos
+            for i, c in enumerate(xpath_str[start_pos:]):
+                if c == '[':
+                    bracket_depth += 1
+                elif c == ']':
+                    bracket_depth -= 1
+                    if bracket_depth == 0:
+                        end_pos = start_pos + i + 1
+                        break
+            
+            bracket_content = xpath_str[start_pos + 1:end_pos - 1]
+            css_attr = parse_bracket_conditions(bracket_content)
+            return css_attr, end_pos
     
         css = ""
         position = 0
@@ -533,19 +597,51 @@ class ChromeHelper(object):
         while position < len(xpath):
             node = prog.match(xpath[position:])
             if node is None:
+                # Try to handle complex xpath with 'and' conditions manually
+                remaining = xpath[position:]
+                # Match pattern like //tag[@attr1='val1' and @attr2='val2']
+                complex_match = re.match(
+                    r"(//?)([a-zA-Z][a-zA-Z0-9]*|\*)\[([^\]]+)\]",
+                    remaining
+                )
+                if complex_match:
+                    nav_str = complex_match.group(1)
+                    tag_str = complex_match.group(2)
+                    bracket_content = complex_match.group(3)
+                    
+                    nav = " " if nav_str == "//" else " > " if position != 0 else ""
+                    tag = "" if tag_str == "*" else tag_str
+                    attr = parse_bracket_conditions(bracket_content)
+                    
+                    css += nav + tag + attr
+                    position += complex_match.end()
+                    continue
                 return xpath
-                # raise "Invalid or unsupported Xpath: %s" % xpath
-            # log.debug("node found: %s" % node)
+            
             match = node.groupdict()
-            # log.debug("broke node down to: %s" % match)
+            match_end = node.end()
 
             nav = " " if match['nav'] == "//" else " > " if position != 0 else ""
             tag = "" if match['tag'] == "*" else match['tag'] or ""
+            
+            # Check if there are unprocessed bracket conditions (for 'and' cases)
+            remaining_after_match = xpath[position + match_end:]
+            if not match['matched'] and not match['contained'] and remaining_after_match.startswith('['):
+                # The regex didn't capture the bracket - likely contains 'and'
+                css_attr, new_end = parse_bracket_at_position(xpath[position:], match_end)
+                if css_attr:
+                    css += nav + tag + css_attr
+                    position += new_end
+                    continue
 
             if match['idvalue']:
                 attr = "#%s" % match['idvalue'].replace(" ", "#")
             elif match['matched']:
-                if match['mattr'] == "@id":
+                # Check if the matched content contains 'and' for multiple conditions
+                matched_content = match['matched']
+                if ' and ' in matched_content.lower():
+                    attr = parse_bracket_conditions(matched_content)
+                elif match['mattr'] == "@id":
                     attr = "#%s" % match['mvalue'].replace(" ", "#")
                 elif match['mattr'] == "@class":
                     attr = ".%s" % match['mvalue'].replace(" ", ".")
@@ -565,9 +661,8 @@ class ChromeHelper(object):
                 
             nth = ":nth-of-type(%s)" % match['nth'] if match['nth'] else ""
             node_css = nav + tag + attr + nth
-            # log.debug("final node css: %s" % node_css)
             css += node_css
-            position += node.end()
+            position += match_end
             
         return css.strip() 
 
@@ -706,9 +801,13 @@ class ChromeHelper(object):
                     return False, None
                 
                 node_id = result['nodeId']
-                box_model = await process_tab.send(ChromeHelper.cdp_generator('DOM.getBoxModel', {
-                    'nodeId': node_id
-                }), _is_update=True)
+                box_model = None
+                try:
+                    box_model = await process_tab.send(ChromeHelper.cdp_generator('DOM.getBoxModel', {
+                        'nodeId': node_id
+                    }), _is_update=True)
+                except Exception as e:
+                    log.debug(f"Error getting box model: {e}")
                 return process_tab, result, box_model, node_id
             
             search_result = await asyncio.wait_for(execute_element_search(), timeout=timeout)
@@ -722,7 +821,7 @@ class ChromeHelper(object):
         except Exception:
             return False, None
 
-        if 'model' in box_model and 'content' in box_model['model']:
+        if box_model and 'model' in box_model and 'content' in box_model['model']:
             content = box_model['model']['content']
             x_min, y_min = content[0], content[1]
             x_max, y_max = content[4], content[5]
@@ -759,6 +858,8 @@ class ChromeHelper(object):
                 }), _is_update=True)
             
             return True, coordinates
+        elif not click_enabled and node_id:
+            return True, None
         else:
             return False, None
 
