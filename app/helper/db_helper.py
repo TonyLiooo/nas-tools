@@ -178,6 +178,85 @@ class DbHelper:
             return self._db.query(TRANSFERHISTORY).count(), self._db.query(TRANSFERHISTORY).order_by(
                 TRANSFERHISTORY.DATE.desc()).limit(int(rownum)).offset(begin_pos).all()
 
+    def get_transfer_history_grouped(self, search, page, rownum):
+        """
+        查询分组的识别转移记录，按影视剧分组
+        """
+        if int(page) == 1:
+            begin_pos = 0
+        else:
+            begin_pos = (int(page) - 1) * int(rownum)
+
+        # 构建分组查询
+        group_query = self._db.query(
+            TRANSFERHISTORY.TYPE,
+            TRANSFERHISTORY.TITLE,
+            TRANSFERHISTORY.YEAR,
+            TRANSFERHISTORY.TMDBID,
+            func.max(TRANSFERHISTORY.CATEGORY).label('CATEGORY'),
+            func.count(TRANSFERHISTORY.ID).label('CNT'),
+            func.max(TRANSFERHISTORY.DATE).label('LATEST_DATE')
+        )
+
+        if search:
+            search = f"%{search}%"
+            group_query = group_query.filter(
+                (TRANSFERHISTORY.SOURCE_FILENAME.like(search))
+                | (TRANSFERHISTORY.TITLE.like(search))
+            )
+
+        group_query = group_query.group_by(
+            TRANSFERHISTORY.TYPE,
+            TRANSFERHISTORY.TITLE,
+            TRANSFERHISTORY.YEAR,
+            TRANSFERHISTORY.TMDBID
+        ).order_by(func.max(TRANSFERHISTORY.DATE).desc())
+
+        groups_all = group_query.all()
+        total_groups = len(groups_all)
+        paged_groups = groups_all[begin_pos:begin_pos + int(rownum)]
+
+        # 为每个分组获取详细记录
+        result = []
+        for group in paged_groups:
+            records_query = self._db.query(TRANSFERHISTORY).filter(
+                TRANSFERHISTORY.TYPE == group.TYPE,
+                TRANSFERHISTORY.TITLE == group.TITLE,
+                TRANSFERHISTORY.YEAR == group.YEAR
+            )
+            if group.TMDBID:
+                records_query = records_query.filter(
+                    TRANSFERHISTORY.TMDBID == int(group.TMDBID)
+                )
+            else:
+                records_query = records_query.filter(
+                    TRANSFERHISTORY.TMDBID.is_(None)
+                )
+
+            if search:
+                records_query = records_query.filter(
+                    (TRANSFERHISTORY.SOURCE_FILENAME.like(search))
+                    | (TRANSFERHISTORY.TITLE.like(search))
+                )
+
+            records = records_query.order_by(
+                TRANSFERHISTORY.SEASON_EPISODE.asc(),
+                TRANSFERHISTORY.DATE.desc()
+            ).all()
+
+            result.append({
+                'TYPE': group.TYPE,
+                'TITLE': group.TITLE,
+                'YEAR': group.YEAR,
+                'TMDBID': group.TMDBID,
+                'CATEGORY': group.CATEGORY,
+                'CNT': group.CNT,
+                'LATEST_DATE': group.LATEST_DATE,
+                'RECORDS': records
+            })
+
+        return total_groups, result
+
     def get_transfer_info_by_id(self, logid):
         """
         据logid查询PATH

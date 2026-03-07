@@ -11,41 +11,39 @@
       <div class="col-auto ms-auto d-print-none">
         <div class="btn-list">
           <a href="javascript:batch_check_action('reidentification')"
-             class="btn btn-primary ms-auto d-none d-sm-inline-block">
+            class="btn btn-primary ms-auto d-none d-sm-inline-block">
             {{ SVG.refresh() }}
             重新识别
           </a>
-          <a href="javascript:batch_check_action('reidentification')" class="btn btn-primary d-sm-none btn-icon" >
+          <a href="javascript:batch_check_action('reidentification')" class="btn btn-primary d-sm-none btn-icon">
             {{ SVG.refresh() }}
           </a>
           <div class="dropdown">
             <a href="#" class="btn btn-danger ms-auto d-none d-sm-inline-block dropdown-toggle"
-               data-bs-toggle="dropdown" aria-expanded="false">
+              data-bs-toggle="dropdown" aria-expanded="false">
               {{ SVG.trash() }}
               批量删除
             </a>
-            <a href="#" class="btn btn-danger d-sm-none btn-icon"
-               data-bs-toggle="dropdown" aria-expanded="false">
+            <a href="#" class="btn btn-danger d-sm-none btn-icon" data-bs-toggle="dropdown" aria-expanded="false">
               {{ SVG.trash() }}
             </a>
             <div class="dropdown-menu dropdown-menu-end">
-              <a class="dropdown-item text-danger" href="javascript:batch_check_action('del_source')" >
+              <a class="dropdown-item text-danger" href="javascript:batch_check_action('del_source')">
                 删除源文件
               </a>
-              <a class="dropdown-item text-danger" href="javascript:batch_check_action('del_dest')" >
+              <a class="dropdown-item text-danger" href="javascript:batch_check_action('del_dest')">
                 删除媒体库文件
               </a>
-              <a class="dropdown-item text-danger" href="javascript:batch_check_action('del_all')" >
+              <a class="dropdown-item text-danger" href="javascript:batch_check_action('del_all')">
                 删除源及媒体库文件
               </a>
             </div>
           </div>
-          <a href="javascript:truncate_history()"
-             class="btn btn-danger ms-auto d-none d-sm-inline-block">
+          <a href="javascript:truncate_history()" class="btn btn-danger ms-auto d-none d-sm-inline-block">
             {{ SVG.eraser() }}
             清空记录
           </a>
-          <a href="javascript:truncate_history()" class="btn btn-danger d-sm-none btn-icon" >
+          <a href="javascript:truncate_history()" class="btn btn-danger d-sm-none btn-icon">
             {{ SVG.eraser() }}
           </a>
         </div>
@@ -63,13 +61,31 @@
           <div class="card-body border-bottom py-3">
             <div class="d-flex">
               <div class="text-muted">
+                {% if ViewMode == 'grouped' %}
+                共 {{ TotalCount }} 部影视，{{ TotalRecords }} 条记录
+                {% else %}
                 共 {{ TotalCount }} 条记录
+                {% endif %}
               </div>
-              <div class="ms-auto text-muted">
+              <div class="ms-auto d-flex align-items-center text-muted">
+                <div class="btn-group btn-group-sm me-3" role="group">
+                  <a href="javascript:navmenu('history?s={{ Search }}&view=timeline')"
+                    class="btn btn-sm {% if ViewMode != 'grouped' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                    title="按时间排序显示">
+                    {{ SVG.history() }}
+                    按时间
+                  </a>
+                  <a href="javascript:navmenu('history?s={{ Search }}&view=grouped')"
+                    class="btn btn-sm {% if ViewMode == 'grouped' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                    title="按影视剧分类显示">
+                    {{ SVG.category() }}
+                    按分类
+                  </a>
+                </div>
                 搜索:
                 <div class="ms-2 d-inline-block">
                   <input id="search_word" value="{{ Search }}" type="text" class="form-control form-control-sm"
-                         aria-label="搜索">
+                    aria-label="搜索">
                 </div>
               </div>
             </div>
@@ -77,149 +93,350 @@
           <div class="table-responsive {% if TotalCount > 0 %}table-page-body{% endif %}">
             <table class="table table-vcenter card-table table-hover table-striped">
               <thead>
-              <tr>
-                {% if TotalCount > 0 %}
+                <tr>
+                  {% if TotalCount > 0 %}
                   <th class="w-1">
+                    {% if ViewMode == 'grouped' %}
                     <input class="form-check-input m-0 align-middle" type="checkbox" aria-label="全选"
-                           onclick="select_SelectALL($(this).prop('checked'), 'transfer_history')">
+                      onclick="selectAllGrouped($(this).prop('checked'))">
+                    {% else %}
+                    <input class="form-check-input m-0 align-middle" type="checkbox" aria-label="全选"
+                      onclick="select_SelectALL($(this).prop('checked'), 'transfer_history')">
+                    {% endif %}
                   </th>
-                {% endif %}
-                <th>媒体信息</th>
-                <th>文件信息</th>
-                <th>时间</th>
-                <th></th>
-              </tr>
+                  {% endif %}
+                  {% if ViewMode == 'grouped' %}
+                  <th>影视/剧集</th>
+                  <th>详情</th>
+                  <th>最后更新</th>
+                  {% else %}
+                  <th>媒体信息</th>
+                  <th>文件信息</th>
+                  <th>时间</th>
+                  {% endif %}
+                  <th></th>
+                </tr>
               </thead>
               <tbody>
-              {% if TotalCount > 0 %}
-                {% for History in Historys %}
-                  <tr>
-                    <td class="w-1">
-                      <input class="form-check-input m-0 align-middle" name="transfer_history" value="{{ History.ID }}" type="checkbox">
-                    </td>
-                    <td>
-                      <div class="d-flex py-1 align-items-center">
-                      <span class="avatar me-2 text-nowrap">
-                        {% if History.TYPE == "电影" %}
-                          {{ SVG.movie() }}
+                {% if ViewMode == 'grouped' %}
+                {# ==================== 分类视图（三级层级：类型→影视→记录） ==================== #}
+                {% if TotalCount > 0 %}
+                {% for TypeGroup in Historys %}
+                {% set t = loop.index %}
+                {# ====== 第一级：类型分组标题行（电视剧/电影/动漫/未识别） ====== #}
+                <tr class="type-header" onclick="toggleTypeGroup({{ t }})"
+                  style="cursor: pointer; background-color: rgba(32, 107, 196, 0.12);">
+                  <td class="w-1">
+                    <input class="form-check-input m-0 align-middle type-check" type="checkbox"
+                      onclick="event.stopPropagation(); toggleTypeCheckboxes({{ t }}, this.checked)">
+                  </td>
+                  <td>
+                    <div class="d-flex align-items-center">
+                      <span id="type-icon-{{ t }}" class="me-2 text-muted"
+                        style="display: inline-block; transition: transform 0.2s;">
+                        {{ SVG.chevron_right() }}
+                      </span>
+                      <span class="avatar avatar-sm me-2 text-nowrap">
+                        {% if TypeGroup.TYPE_NAME == "电影" %}
+                        {{ SVG.movie() }}
+                        {% elif TypeGroup.TYPE_NAME == "动漫" %}
+                        {{ SVG.video() }}
+                        {% elif TypeGroup.TYPE_NAME == "未识别" %}
+                        {{ SVG.alert_triangle() }}
                         {% else %}
-                          {{ SVG.device_tv() }}
+                        {{ SVG.device_tv() }}
                         {% endif %}
                       </span>
-                        <div class="flex-fill">
-                          <div class="font-weight-medium text-nowrap">
-                            {% if History.TMDBID %}
-                              <a href="https://www.themoviedb.org/{% if History.TYPE == "电影" %}movie{% else %}tv{% endif %}/{{ History.TMDBID }}"
-                                 target="_blank">
-                              {{ History.TITLE }} ({{ History.YEAR }})
-                              </a>
-                              {% if History.SEASON_EPISODE %}
-                              <br><a href="https://www.themoviedb.org/tv/{{ History.TMDBID }}{{ History.SEASON_EPISODE.replace('S', '/season/').replace('E', '/episode/')  }}"
-                               target="_blank">
-                              <span class="text-orange">{{ History.SEASON_EPISODE }}</span></a>
-                              {% endif %}
-                            {% else %}
-                              {{ History.TITLE }} ({{ History.YEAR }})
-                              {% if History.SEASON_EPISODE %}
-                              <span class="text-orange">{{ History.SEASON_EPISODE }}</span>
-                              {% endif %}
-                            {% endif %}
-                          </div>
-                          {% if History.CATEGORY %}
-                            <div class="text-muted">类别：{{ History.CATEGORY }}</div>
+                      <span class="fw-bold fs-5">{{ TypeGroup.TYPE_NAME }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge bg-blue-lt">{{ TypeGroup.GROUP_COUNT }} 部</span>
+                    <span class="badge bg-azure-lt ms-1">{{ TypeGroup.RECORD_COUNT }} 条记录</span>
+                  </td>
+                  <td></td>
+                  <td></td>
+                </tr>
+
+                {# ====== 第二级+第三级：该类型下的影视分组和记录 ====== #}
+                {% for Group in TypeGroup.GROUPS %}
+                {% set s = loop.index %}
+                {# ------ 第二级：影视分组标题行（默认隐藏） ------ #}
+                <tr class="type-{{ t }}-child type-{{ t }}-show-row" onclick="toggleShowGroup({{ t }}, {{ s }})"
+                  style="cursor: pointer; display: none; background-color: rgba(32, 107, 196, 0.04);">
+                  <td class="w-1" style="padding-left: 1.5rem;">
+                    <input class="form-check-input m-0 align-middle type-{{ t }}-show-cb show-check" type="checkbox"
+                      onclick="event.stopPropagation(); toggleShowCheckboxes({{ t }}, {{ s }}, this.checked)">
+                  </td>
+                  <td>
+                    <div class="d-flex py-1 align-items-center">
+                      <span id="show-icon-{{ t }}-{{ s }}" class="show-icon-type-{{ t }} me-2 text-muted"
+                        style="display: inline-block; transition: transform 0.2s;">
+                        {{ SVG.chevron_right() }}
+                      </span>
+                      <span class="avatar avatar-sm me-2 text-nowrap">
+                        {% if Group.TYPE == "电影" %}
+                        {{ SVG.movie() }}
+                        {% else %}
+                        {{ SVG.device_tv() }}
+                        {% endif %}
+                      </span>
+                      <div class="flex-fill">
+                        <div class="font-weight-medium text-nowrap">
+                          {% if Group.TMDBID %}
+                          <a href="https://www.themoviedb.org/{% if Group.TYPE == '电影' %}movie{% else %}tv{% endif %}/{{ Group.TMDBID }}"
+                            target="_blank" onclick="event.stopPropagation()">
+                            {{ Group.TITLE }} ({{ Group.YEAR }})
+                          </a>
+                          {% else %}
+                          {{ Group.TITLE }} ({{ Group.YEAR }})
                           {% endif %}
                         </div>
                       </div>
-                    </td>
-                    <td>
-                      <div class="text-wrap">
-                        <a href='javascript:navmenu("mediafile?dir={{ History.SOURCE_PATH.replace("\\", "/") }}")'>
-                          {{ History.SOURCE_FILENAME or '' }}</a>
-                      </div>
-                      <div class="text-wrap">
-                        {% if History.DEST_PATH or History.DEST_FILENAME %}
-                        <span class="text-muted">=> </span>
-                        {% endif %}
-                        {% if History.DEST_PATH %}
-                          <a class="text-green"
-                             href='javascript:navmenu("mediafile?dir={{ History.DEST_PATH.replace("\\", "/") }}")'>
-                            {{ History.DEST_FILENAME or '' }}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="text-nowrap">
+                      {% if Group.CATEGORY %}
+                      <span class="text-muted">{{ Group.CATEGORY }}</span>
+                      <span class="mx-1 text-muted">·</span>
+                      {% endif %}
+                      <span class="badge bg-blue-lt">{{ Group.CNT }} 条记录</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="text-nowrap">
+                      <small>{{ Group.LATEST_DATE }}</small>
+                    </div>
+                  </td>
+                  <td></td>
+                </tr>
+
+                {# ------ 第三级：影视分组内的详细记录（默认隐藏） ------ #}
+                {% for History in Group.RECORDS %}
+                <tr class="type-{{ t }}-child type-{{ t }}-detail-row show-{{ t }}-{{ s }}-detail-row"
+                  style="display: none;">
+                  <td class="w-1" style="padding-left: 2.5rem;">
+                    <input
+                      class="form-check-input m-0 align-middle type-{{ t }}-record-cb show-{{ t }}-{{ s }}-record-cb"
+                      name="transfer_history" value="{{ History.ID }}" type="checkbox">
+                  </td>
+                  <td>
+                    <div class="d-flex py-1 align-items-center">
+                      <div class="flex-fill">
+                        <div class="font-weight-medium text-nowrap">
+                          {% if History.SEASON_EPISODE %}
+                          {% if History.TMDBID %}
+                          <a href="https://www.themoviedb.org/tv/{{ History.TMDBID }}{{ History.SEASON_EPISODE.replace('S', '/season/').replace('E', '/episode/') }}"
+                            target="_blank">
+                            <span class="text-orange">{{ History.SEASON_EPISODE }}</span>
                           </a>
-                        {% else %}
-                          {{ History.DEST_FILENAME or '' }}
-                        {% endif %}
-                      </div>
-                    </td>
-                    <td>
-                      <div class="text-nowrap">
-                        <small>{{ History.DATE }}</small>
-                        <div class="text-muted"><small>来自：{{ History.SOURCE or '' }}</small></div>
-                        <div class="text-muted"><small>转移方式：{{ History.SYNC_MODE }}</small></div>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="dropdown">
-                        <a href="#" class="btn-action" data-bs-toggle="dropdown" aria-expanded="false">
-                          {{ SVG.dots_vertical() }}
-                        </a>
-                        <div class="dropdown-menu dropdown-menu-end">
-                          <a class="dropdown-item"
-                             href='javascript:re_identification("history", ["{{ History.ID }}"])'>
-                            重新识别
-                          </a>
-                          <a class="dropdown-item"
-                             href='javascript:rename_history("{{ History.TYPE }}", "{{ History.SOURCE_FILENAME }}", "{{ History.ID }}", "{{ History.RMT_MODE }}")'>
-                            手动识别
-                          </a>
-                          <a class="dropdown-item text-danger"
-                             href='javascript:single_delete_history("del_source", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
-                            删除源文件
-                          </a>
-                          <a class="dropdown-item text-danger"
-                             href='javascript:single_delete_history("del_dest", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
-                            删除媒体库文件
-                          </a>
-                          <a class="dropdown-item text-danger"
-                             href='javascript:single_delete_history("del_all", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
-                            删除源及媒体库文件
-                          </a>
+                          {% else %}
+                          <span class="text-orange">{{ History.SEASON_EPISODE }}</span>
+                          {% endif %}
+                          {% else %}
+                          {{ History.TITLE }} ({{ History.YEAR }})
+                          {% endif %}
                         </div>
                       </div>
-                    </td>
-                  </tr>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="text-wrap">
+                      <a href='javascript:navmenu("mediafile?dir={{ History.SOURCE_PATH.replace("\\", "/") }}")'>
+                        {{ History.SOURCE_FILENAME or '' }}</a>
+                    </div>
+                    <div class="text-wrap">
+                      {% if History.DEST_PATH or History.DEST_FILENAME %}
+                      <span class="text-muted">=> </span>
+                      {% endif %}
+                      {% if History.DEST_PATH %}
+                      <a class="text-green"
+                        href='javascript:navmenu("mediafile?dir={{ History.DEST_PATH.replace("\\", "/") }}")'>
+                        {{ History.DEST_FILENAME or '' }}
+                      </a>
+                      {% else %}
+                      {{ History.DEST_FILENAME or '' }}
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="text-nowrap">
+                      <small>{{ History.DATE }}</small>
+                      <div class="text-muted"><small>来自：{{ History.SOURCE or '' }}</small></div>
+                      <div class="text-muted"><small>转移方式：{{ History.SYNC_MODE }}</small></div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="dropdown">
+                      <a href="#" class="btn-action" data-bs-toggle="dropdown" aria-expanded="false">
+                        {{ SVG.dots_vertical() }}
+                      </a>
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href='javascript:re_identification("history", ["{{ History.ID }}"])'>
+                          重新识别
+                        </a>
+                        <a class="dropdown-item"
+                          href='javascript:rename_history("{{ History.TYPE }}", "{{ History.SOURCE_FILENAME }}", "{{ History.ID }}", "{{ History.RMT_MODE }}")'>
+                          手动识别
+                        </a>
+                        <a class="dropdown-item text-danger"
+                          href='javascript:single_delete_history("del_source", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
+                          删除源文件
+                        </a>
+                        <a class="dropdown-item text-danger"
+                          href='javascript:single_delete_history("del_dest", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
+                          删除媒体库文件
+                        </a>
+                        <a class="dropdown-item text-danger"
+                          href='javascript:single_delete_history("del_all", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
+                          删除源及媒体库文件
+                        </a>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
                 {% endfor %}
-              {% else %}
+                {% endfor %}
+                {% endfor %}
+                {% else %}
                 <tr>
                   <td colspan="4" align="center">没有数据</td>
                 </tr>
-              {% endif %}
+                {% endif %}
+                {% else %}
+                {# ==================== 时间线视图（原有视图） ==================== #}
+                {% if TotalCount > 0 %}
+                {% for History in Historys %}
+                <tr>
+                  <td class="w-1">
+                    <input class="form-check-input m-0 align-middle" name="transfer_history" value="{{ History.ID }}"
+                      type="checkbox">
+                  </td>
+                  <td>
+                    <div class="d-flex py-1 align-items-center">
+                      <span class="avatar me-2 text-nowrap">
+                        {% if History.TYPE == "电影" %}
+                        {{ SVG.movie() }}
+                        {% else %}
+                        {{ SVG.device_tv() }}
+                        {% endif %}
+                      </span>
+                      <div class="flex-fill">
+                        <div class="font-weight-medium text-nowrap">
+                          {% if History.TMDBID %}
+                          <a href="https://www.themoviedb.org/{% if History.TYPE == " 电影" %}movie{% else %}tv{% endif
+                            %}/{{ History.TMDBID }}" target="_blank">
+                            {{ History.TITLE }} ({{ History.YEAR }})
+                          </a>
+                          {% if History.SEASON_EPISODE %}
+                          <br><a
+                            href="https://www.themoviedb.org/tv/{{ History.TMDBID }}{{ History.SEASON_EPISODE.replace('S', '/season/').replace('E', '/episode/')  }}"
+                            target="_blank">
+                            <span class="text-orange">{{ History.SEASON_EPISODE }}</span></a>
+                          {% endif %}
+                          {% else %}
+                          {{ History.TITLE }} ({{ History.YEAR }})
+                          {% if History.SEASON_EPISODE %}
+                          <span class="text-orange">{{ History.SEASON_EPISODE }}</span>
+                          {% endif %}
+                          {% endif %}
+                        </div>
+                        {% if History.CATEGORY %}
+                        <div class="text-muted">类别：{{ History.CATEGORY }}</div>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="text-wrap">
+                      <a href='javascript:navmenu("mediafile?dir={{ History.SOURCE_PATH.replace("\\", "/") }}")'>
+                        {{ History.SOURCE_FILENAME or '' }}</a>
+                    </div>
+                    <div class="text-wrap">
+                      {% if History.DEST_PATH or History.DEST_FILENAME %}
+                      <span class="text-muted">=> </span>
+                      {% endif %}
+                      {% if History.DEST_PATH %}
+                      <a class="text-green"
+                        href='javascript:navmenu("mediafile?dir={{ History.DEST_PATH.replace("\\", "/") }}")'>
+                        {{ History.DEST_FILENAME or '' }}
+                      </a>
+                      {% else %}
+                      {{ History.DEST_FILENAME or '' }}
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="text-nowrap">
+                      <small>{{ History.DATE }}</small>
+                      <div class="text-muted"><small>来自：{{ History.SOURCE or '' }}</small></div>
+                      <div class="text-muted"><small>转移方式：{{ History.SYNC_MODE }}</small></div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="dropdown">
+                      <a href="#" class="btn-action" data-bs-toggle="dropdown" aria-expanded="false">
+                        {{ SVG.dots_vertical() }}
+                      </a>
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href='javascript:re_identification("history", ["{{ History.ID }}"])'>
+                          重新识别
+                        </a>
+                        <a class="dropdown-item"
+                          href='javascript:rename_history("{{ History.TYPE }}", "{{ History.SOURCE_FILENAME }}", "{{ History.ID }}", "{{ History.RMT_MODE }}")'>
+                          手动识别
+                        </a>
+                        <a class="dropdown-item text-danger"
+                          href='javascript:single_delete_history("del_source", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
+                          删除源文件
+                        </a>
+                        <a class="dropdown-item text-danger"
+                          href='javascript:single_delete_history("del_dest", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
+                          删除媒体库文件
+                        </a>
+                        <a class="dropdown-item text-danger"
+                          href='javascript:single_delete_history("del_all", "{{ History.ID }}", "{{ History.TITLE }} ({{ History.YEAR }}) {{ History.SEASON_EPISODE }}")'>
+                          删除源及媒体库文件
+                        </a>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                  <td colspan="4" align="center">没有数据</td>
+                </tr>
+                {% endif %}
+                {% endif %}
               </tbody>
             </table>
           </div>
-          {% if TotalCount > 0 %}
-            <div class="card-footer d-flex align-items-center">
-              <p class="m-0 text-muted">当前页 <span>{{ Count }}</span> 条</p>
-              <ul class="pagination m-0 ms-auto">
-                <li class="page-item {% if CurrentPage==1 %} disabled {% endif %}">
-                  <a class="page-link" href="javascript:go_pre_page('{{ Search }}', {{ CurrentPage }})" tabindex="-1"
-                     aria-disabled="true">
-                    {{ SVG.chevron_left() }}
-                  </a>
-                </li>
-                {% for page in PageRange %}
-                  <li class="page-item {% if page==CurrentPage %} active {% endif %}">
-                    <a class="page-link"
-                       href="javascript:navmenu('history?s={{ Search }}&page={{ page }}')">{{ page }}</a>
-                  </li>
-                {% endfor %}
-                <li class="page-item {% if CurrentPage >= TotalPage %} disabled {% endif %}">
-                  <a class="page-link"
-                     href="{% if CurrentPage < TotalPage %}javascript:go_next_page('{{ Search }}', {{ CurrentPage }}){% else %}javascript:void(0){% endif %}">
-                    {{ SVG.chevron_right() }}
-                  </a>
-                </li>
-              </ul>
-            </div>
+          {% if ViewMode != 'grouped' and TotalCount > 0 %}
+          <div class="card-footer d-flex align-items-center">
+            <p class="m-0 text-muted">当前页 <span>{{ Count }}</span> 条</p>
+            <ul class="pagination m-0 ms-auto">
+              <li class="page-item {% if CurrentPage==1 %} disabled {% endif %}">
+                <a class="page-link" href="javascript:go_pre_page('{{ Search }}', {{ CurrentPage }})" tabindex="-1"
+                  aria-disabled="true">
+                  {{ SVG.chevron_left() }}
+                </a>
+              </li>
+              {% for page in PageRange %}
+              <li class="page-item {% if page==CurrentPage %} active {% endif %}">
+                <a class="page-link"
+                  href="javascript:navmenu('history?s={{ Search }}&view={{ ViewMode }}&page={{ page }}')">{{ page }}</a>
+              </li>
+              {% endfor %}
+              <li class="page-item {% if CurrentPage >= TotalPage %} disabled {% endif %}">
+                <a class="page-link"
+                  href="{% if CurrentPage < TotalPage %}javascript:go_next_page('{{ Search }}', {{ CurrentPage }}){% else %}javascript:void(0){% endif %}">
+                  {{ SVG.chevron_right() }}
+                </a>
+              </li>
+            </ul>
+          </div>
           {% endif %}
         </div>
       </div>
@@ -227,14 +444,17 @@
   </div>
 </div>
 <script type="text/javascript">
+  // 当前视图模式
+  const currentViewMode = "{{ ViewMode }}";
+
   // 上一页
   function go_pre_page(search, page) {
-    navmenu("history?s=" + search + "&page=" + (page - 1))
+    navmenu("history?s=" + search + "&view=" + currentViewMode + "&page=" + (page - 1))
   }
 
   // 下一页
   function go_next_page(search, page) {
-    navmenu("history?s=" + search + "&page=" + (page + 1))
+    navmenu("history?s=" + search + "&view=" + currentViewMode + "&page=" + (page + 1))
   }
 
   //手动重新识别
@@ -249,12 +469,12 @@
       msg = '源文件及媒体库';
     } else if (flag === 'del_source') {
       msg = '源';
-    } else if  (flag === 'del_dest') {
+    } else if (flag === 'del_dest') {
       msg = '媒体库';
     }
     show_confirm_modal(`${name} 对应${msg}文件将被同步删除，是否确认？`, function () {
       hide_confirm_modal();
-      ajax_post("delete_history", {"flag": flag, "logids": logids}, function (ret) {
+      ajax_post("delete_history", { "flag": flag, "logids": logids }, function (ret) {
         window_history_refresh();
       });
     });
@@ -275,7 +495,7 @@
   $('#search_word').bind('keypress', function (event) {
     if (event.keyCode == "13") {
       const keyword = $("#search_word").val();
-      navmenu("history?s=" + keyword);
+      navmenu("history?s=" + keyword + "&view=" + currentViewMode);
     }
   });
 
@@ -296,6 +516,85 @@
   function single_delete_history(flag, logid, name) {
     const logids = [logid];
     delete_history(flag, logids, name);
+  }
+
+  // ==================== 分类视图：三级折叠相关函数 ====================
+
+  /**
+   * 第一级：展开/折叠类型分组（电视剧/电影/动漫/未识别）
+   */
+  function toggleTypeGroup(t) {
+    var showRows = document.querySelectorAll('.type-' + t + '-show-row');
+    if (showRows.length === 0) return;
+
+    var isCollapsed = showRows[0].style.display === 'none';
+
+    if (isCollapsed) {
+      // 展开：只显示影视标题行，详细记录保持隐藏
+      showRows.forEach(function (row) { row.style.display = 'table-row'; });
+      // 确保所有详细记录行隐藏（重新折叠子级）
+      document.querySelectorAll('.type-' + t + '-detail-row').forEach(function (row) {
+        row.style.display = 'none';
+      });
+      // 重置所有影视分组箭头为折叠状态
+      document.querySelectorAll('.show-icon-type-' + t).forEach(function (icon) {
+        icon.style.transform = 'rotate(0deg)';
+      });
+    } else {
+      // 折叠：隐藏该类型下所有子元素
+      document.querySelectorAll('.type-' + t + '-child').forEach(function (row) {
+        row.style.display = 'none';
+      });
+      // 重置所有影视分组箭头
+      document.querySelectorAll('.show-icon-type-' + t).forEach(function (icon) {
+        icon.style.transform = 'rotate(0deg)';
+      });
+    }
+
+    // 更新类型箭头图标
+    var icon = document.getElementById('type-icon-' + t);
+    if (icon) icon.style.transform = isCollapsed ? 'rotate(90deg)' : 'rotate(0deg)';
+  }
+
+  /**
+   * 第二级：展开/折叠影视分组（某部具体的电视剧/电影）
+   */
+  function toggleShowGroup(t, s) {
+    var details = document.querySelectorAll('.show-' + t + '-' + s + '-detail-row');
+    if (details.length === 0) return;
+
+    var isCollapsed = details[0].style.display === 'none';
+    details.forEach(function (row) {
+      row.style.display = isCollapsed ? 'table-row' : 'none';
+    });
+
+    var icon = document.getElementById('show-icon-' + t + '-' + s);
+    if (icon) icon.style.transform = isCollapsed ? 'rotate(90deg)' : 'rotate(0deg)';
+  }
+
+  /**
+   * 类型级全选：选中/取消该类型下所有记录
+   */
+  function toggleTypeCheckboxes(t, checked) {
+    document.querySelectorAll('.type-' + t + '-show-cb').forEach(function (cb) { cb.checked = checked; });
+    document.querySelectorAll('.type-' + t + '-record-cb').forEach(function (cb) { cb.checked = checked; });
+  }
+
+  /**
+   * 影视级全选：选中/取消该影视下所有记录
+   */
+  function toggleShowCheckboxes(t, s, checked) {
+    document.querySelectorAll('.show-' + t + '-' + s + '-record-cb').forEach(function (cb) { cb.checked = checked; });
+  }
+
+  /**
+   * 全局全选（分类视图）
+   */
+  function selectAllGrouped(checked) {
+    // 选中所有记录复选框
+    select_SelectALL(checked, 'transfer_history');
+    // 同步所有类型和影视复选框
+    document.querySelectorAll('.type-check, .show-check').forEach(function (cb) { cb.checked = checked; });
   }
 
 </script>

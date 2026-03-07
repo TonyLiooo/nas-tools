@@ -1122,19 +1122,39 @@ def history():
     pagenum = request.args.get("pagenum")
     keyword = request.args.get("s") or ""
     current_page = request.args.get("page")
-    Result = WebAction().get_transfer_history({"keyword": keyword, "page": current_page, "pagenum": pagenum})
-    PageRange = WebUtils.get_page_range(current_page=Result.get("currentPage"),
-                                        total_page=Result.get("totalPage"))
+    view_mode = request.args.get("view") or "timeline"
 
-    return render_template("rename/history.html",
-                           TotalCount=Result.get("total"),
-                           Count=len(Result.get("result")),
-                           Historys=Result.get("result"),
-                           Search=keyword,
-                           CurrentPage=Result.get("currentPage"),
-                           TotalPage=Result.get("totalPage"),
-                           PageRange=PageRange,
-                           PageNum=Result.get("currentPage"))
+    if view_mode == "grouped":
+        Result = WebAction().get_transfer_history_grouped(
+            {"keyword": keyword})
+        PageRange = []
+        return render_template("rename/history.html",
+                               TotalCount=Result.get("total"),
+                               TotalRecords=Result.get("totalRecords", 0),
+                               Count=len(Result.get("result")),
+                               Historys=Result.get("result"),
+                               Search=keyword,
+                               ViewMode=view_mode,
+                               CurrentPage=1,
+                               TotalPage=1,
+                               PageRange=PageRange,
+                               PageNum=1)
+    else:
+        Result = WebAction().get_transfer_history(
+            {"keyword": keyword, "page": current_page, "pagenum": pagenum})
+        PageRange = WebUtils.get_page_range(current_page=Result.get("currentPage"),
+                                            total_page=Result.get("totalPage"))
+        return render_template("rename/history.html",
+                               TotalCount=Result.get("total"),
+                               TotalRecords=0,
+                               Count=len(Result.get("result")),
+                               Historys=Result.get("result"),
+                               Search=keyword,
+                               ViewMode=view_mode,
+                               CurrentPage=Result.get("currentPage"),
+                               TotalPage=Result.get("totalPage"),
+                               PageRange=PageRange,
+                               PageNum=Result.get("currentPage"))
 
 
 # TMDB缓存页面

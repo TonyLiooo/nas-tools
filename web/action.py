@@ -4151,6 +4151,76 @@ class WebAction:
         }
 
     @staticmethod
+    def get_transfer_history_grouped(data):
+        """
+        查询分组的媒体整理历史记录（按类型→影视→记录三级结构）
+        """
+        SearchStr = data.get("keyword")
+        # 分类视图获取所有分组，不做分页（分组折叠后数据量可控）
+        totalCount, groups = FileTransfer().get_transfer_history_grouped(SearchStr, 1, 9999)
+
+        # 定义类型显示顺序
+        TYPE_ORDER = ['电视剧', '电影', '动漫']
+
+        # 按TYPE分类组织数据
+        type_groups_dict = {}
+        total_records = 0
+        for group in groups:
+            records_list = []
+            for record in group['RECORDS']:
+                record_dict = record.as_dict()
+                sync_mode = record_dict.get("MODE")
+                rmt_mode = ModuleConf.get_dictenum_key(
+                    ModuleConf.RMT_MODES, sync_mode) if sync_mode else ""
+                record_dict.update({
+                    "SYNC_MODE": sync_mode,
+                    "RMT_MODE": rmt_mode
+                })
+                records_list.append(record_dict)
+            group_info = {
+                'TYPE': group['TYPE'],
+                'TITLE': group['TITLE'],
+                'YEAR': group['YEAR'],
+                'TMDBID': group['TMDBID'],
+                'CATEGORY': group['CATEGORY'],
+                'CNT': group['CNT'],
+                'LATEST_DATE': group['LATEST_DATE'],
+                'RECORDS': records_list
+            }
+
+            type_name = group['TYPE'] or '未识别'
+            if type_name not in type_groups_dict:
+                type_groups_dict[type_name] = {
+                    'TYPE_NAME': type_name,
+                    'GROUPS': [],
+                    'GROUP_COUNT': 0,
+                    'RECORD_COUNT': 0
+                }
+            type_groups_dict[type_name]['GROUPS'].append(group_info)
+            type_groups_dict[type_name]['GROUP_COUNT'] += 1
+            type_groups_dict[type_name]['RECORD_COUNT'] += group['CNT']
+            total_records += group['CNT']
+
+        # 按预定义顺序排列类型分组
+        type_groups = []
+        for t in TYPE_ORDER:
+            if t in type_groups_dict:
+                type_groups.append(type_groups_dict.pop(t))
+        # 追加剩余类型（如"未识别"等）
+        for t in sorted(type_groups_dict.keys()):
+            type_groups.append(type_groups_dict[t])
+
+        return {
+            "code": 0,
+            "total": totalCount,
+            "totalRecords": total_records,
+            "result": type_groups,
+            "totalPage": 1,
+            "pageNum": 9999,
+            "currentPage": 1
+        }
+
+    @staticmethod
     def truncate_transfer_history():
         """
         清空媒体整理历史记录

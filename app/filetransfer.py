@@ -1357,6 +1357,12 @@ class FileTransfer:
         """
         return self.dbhelper.get_transfer_history(search=search, page=page, rownum=rownum)
 
+    def get_transfer_history_grouped(self, search, page, rownum):
+        """
+        查询分组的转移历史记录
+        """
+        return self.dbhelper.get_transfer_history_grouped(search=search, page=page, rownum=rownum)
+
     def delete_transfer_log_by_id(self, logid):
         """
         删除转移历史记录
