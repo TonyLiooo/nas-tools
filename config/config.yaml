@@ -20,6 +20,8 @@ app:
   web_host: "::"
   # 【WEB管理界面端口】：默认3000
   web_port: 3000
+  # 【Redis服务端口】：默认6379，端口冲突时会自动切换到空闲端口
+  redis_port: 6379
   # 【WEB管理页面登录用户】，默认admin
   login_user: admin
   # 【WEB管理页面登录密码】：默认password，如果是全数字密码，要用''括起来

@@ -1086,6 +1086,12 @@ class AutoSignIn(_IPluginModule):
             self.info("没有可签到站点，停止运行")
             return
 
+        # 签到前清理残留的僵尸浏览器进程
+        try:
+            ChromeHelper.prune_chrome_leftovers(max_age_minutes=10)
+        except Exception as e:
+            self.debug(f"清理残留浏览器进程时出错: {e}")
+
         # 执行签到
         self.info("开始执行签到任务")
         with ThreadPool(min(len(sign_sites), int(self._queue_cnt) if self._queue_cnt else 10)) as p:

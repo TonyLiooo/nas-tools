@@ -251,12 +251,24 @@
                                         {% if torrent.respix %}
                                           <span class="badge text-white bg-cyan mb-1">{{ torrent.respix }}</span>
                                         {% endif %}
+                                        {% if torrent.hr %}
+                                          <span class="badge text-white bg-red mb-1">
+                                            {% if torrent.hr_days %}
+                                              HR{{ torrent.hr_days }}
+                                            {% else %}
+                                              HR
+                                            {% endif %}
+                                          </span>
+                                        {% endif %}
                                         {% if torrent.uploadvalue != 1.0 %}
                                         <span class="badge text-white bg-azure mb-1">{{ (torrent.uploadvalue * 100) | int }}%UL</span>
                                         {% endif %}
                                         {% if torrent.downloadvalue != 1.0 %}
                                           {% if torrent.downloadvalue == 0.0 %}
                                             <span class="badge text-white bg-lime mb-1">FREE</span>
+                                            {% if torrent.free_deadline %}
+                                              <span class="badge badge-outline text-teal mb-1 ms-1">{{ torrent.free_deadline }}</span>
+                                            {% endif %}
                                           {% else %}
                                             <span class="badge text-white bg-indigo mb-1">{{ (torrent.downloadvalue * 100) | int }}%DL</span>
                                           {% endif %}

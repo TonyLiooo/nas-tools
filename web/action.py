@@ -641,6 +641,15 @@ class WebAction:
             else:
                 cfg['app']['login_password'] = cfg_value or "password"
             return cfg
+        # Redis端口
+        if cfg_key == "app.redis_port":
+            from app.helper import RedisHelper
+            port = int(cfg_value) if str(cfg_value).isdigit() else 6379
+            actual_port, _ = RedisHelper.validate_and_apply(port)
+            if not cfg.get('app'):
+                cfg['app'] = {}
+            cfg['app']['redis_port'] = actual_port
+            return cfg
         # 代理
         if cfg_key == "app.proxies":
             if cfg_value:
@@ -3881,7 +3890,10 @@ class WebAction:
                 "reseffect": reseffect,
                 "releasegroup": item.OTHERINFO,
                 "video_encode": video_encode,
-                "labels": labels
+                "labels": labels,
+                "hr": bool(getattr(item, 'HR', 0)),
+                "hr_days": getattr(item, 'HR_DAYS', None),
+                "free_deadline": getattr(item, 'FREE_DEADLINE', None) or ""
             }
             # 促销
             free_item = {

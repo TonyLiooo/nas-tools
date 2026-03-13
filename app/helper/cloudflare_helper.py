@@ -30,11 +30,10 @@ CHALLENGE_TITLES = [
     'DDoS-Guard'
 ]
 
-CHALLENGE_SELECTORS = [
-    # Cloudflare
-    '#cf-challenge-running', '.ray_id', '.attack-box', '#cf-please-wait', '#challenge-spinner', 
-    '#trk_jschal_js', '#turnstile-wrapper', '.lds-ring', 'div.g-recaptcha', 'div.h-captcha',
-    '.cf-turnstile',
+CHALLENGE_SELECTORS_STRICT = [
+    # Cloudflare challenge-only selectors
+    '#cf-challenge-running', '.ray_id', '.attack-box', '#cf-please-wait', '#challenge-spinner',
+    '#trk_jschal_js', '.lds-ring',
     # Custom CloudFlare for EbookParadijs, Film-Paleis, MuziekFabriek and Puur-Hollands
     'td.info #js_info',
     # Fairlane / pararius.com
@@ -44,6 +43,13 @@ CHALLENGE_SELECTORS = [
     # Slider verification
     '#dragContainer', '#dragHandler', '.dragHandlerBg'
 ]
+
+EMBEDDED_CAPTCHA_SELECTORS = [
+    '#turnstile-wrapper', 'div.g-recaptcha', 'div.h-captcha',
+    '.cf-turnstile',
+]
+
+CHALLENGE_SELECTORS = CHALLENGE_SELECTORS_STRICT + EMBEDDED_CAPTCHA_SELECTORS
 SHORT_TIMEOUT = 10
 CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "120"))
 
@@ -76,7 +82,6 @@ def under_challenge(html_text: str):
     :param html_text:
     :return:
     """
-    # get the page title
     if not html_text:
         return False
     page_title = PyQuery(html_text)('title').text()
@@ -84,7 +89,7 @@ def under_challenge(html_text: str):
     for title in CHALLENGE_TITLES:
         if page_title.lower() == title.lower():
             return True
-    for selector in CHALLENGE_SELECTORS:
+    for selector in CHALLENGE_SELECTORS_STRICT:
         html_doc = PyQuery(html_text)
         if html_doc(selector):
             return True
@@ -92,6 +97,13 @@ def under_challenge(html_text: str):
 
 async def check_document_ready(tab:Tab):
     while await tab.evaluate('document.readyState') == 'loading':
+        try:
+            title = (tab.target.title or '').lower()
+            if any(title == t.lower() for t in CHALLENGE_TITLES):
+                log.debug(f"CF challenge detected (title='{title}'), skipping document ready wait")
+                return True
+        except Exception:
+            pass
         await asyncio.sleep(1)
     return True
 
@@ -152,14 +164,19 @@ async def _evil_logic(tab: Tab):
     if await _any_match_titles(tab, ACCESS_DENIED_TITLES) or await _any_match_selectors(tab, ACCESS_DENIED_SELECTORS):
         raise Exception('Cloudflare has blocked this request. Probably your IP is banned for this site, check in your web browser.')
 
-    # find challenge by titles and selectors
-    challenge_found = await _any_match_titles(tab, CHALLENGE_TITLES) or await _any_match_selectors(tab, CHALLENGE_SELECTORS)
+    title_challenge = await _any_match_titles(tab, CHALLENGE_TITLES)
+    strict_selector_challenge = await _any_match_selectors(tab, CHALLENGE_SELECTORS_STRICT)
+
+    challenge_found = title_challenge or strict_selector_challenge
 
     if challenge_found:
-        # wait until the title changes
-        # then wait until all the selectors disappear
+        # Determine which selectors to wait for: on a real challenge page we
+        # wait for ALL selectors (including embedded CAPTCHAs) to disappear;
+        # otherwise only strict challenge selectors need to clear.
+        wait_selectors = CHALLENGE_SELECTORS if title_challenge else CHALLENGE_SELECTORS_STRICT
+
         while not (await _wait_until_condition(tab, CHALLENGE_TITLES, lambda d, t: d.target.title.lower() != t.lower(), async_type=False, message="title changes") and
-                   await _wait_until_condition(tab, CHALLENGE_SELECTORS, async_match_selectors_not, async_type=True, message="selectors disappear")):
+                   await _wait_until_condition(tab, wait_selectors, async_match_selectors_not, async_type=True, message="selectors disappear")):
             log.debug("Timeout waiting for selector")
             verification_result = await click_verify(tab)
             if verification_result:

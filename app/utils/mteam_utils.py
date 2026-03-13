@@ -79,48 +79,41 @@ class MteamUtils:
         chrome = ChromeHelper()
         if not chrome.get_status():
             return None, None
-        
-        # 使用浏览器获取HTML文本
-        if not await chrome.visit(url=url,
-                            local_storage=MteamUtils.get_local_storage(url),
-                            ua=ua,
-                            proxy=proxy):
+
+        try:
+            if not await chrome.visit(url=url,
+                                local_storage=MteamUtils.get_local_storage(url),
+                                ua=ua,
+                                proxy=proxy):
+                return None, None
+
+            download_button = await chrome._tab.find(text="//button[@type='button' and .//span[@aria-label='download'] and .//span[text()='下載']]")
+            if not download_button:
+                return None, None
+            if download_path == None:
+                download_path = Path.cwd() / "downloads"
+                download_path.mkdir(exist_ok=True)
+            else:
+                download_path = Path(download_path)
+            now = datetime.datetime.now()
+            directory_path = download_path / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}-{now.microsecond // 1000:03d}"
+            directory_path.mkdir(exist_ok=True)
+            await chrome._tab.set_download_path(directory_path)
+            await download_button.click()
+
+            torrent = await MteamUtils.check_file_downloaded(directory_path, '.torrent')
+            new_torrent_path = None
+            torrent_content = None
+            if torrent:
+                new_torrent_path = download_path / torrent.name
+                shutil.move(torrent, new_torrent_path)
+                with open(new_torrent_path, 'rb') as f:
+                    torrent_content = f.read()
+
+            directory_path.rmdir()
+            return new_torrent_path, torrent_content
+        finally:
             await chrome.quit()
-            return None, None
-
-        # Mt_dialog = await chrome._tab.find(text="//div[@role='dialog']", timeout=3)
-        # if Mt_dialog:
-        #     Mt_dialog_ok = await chrome._tab.find(text="//div[@role='dialog']//div[@class='ant-modal-footer !text-center']//button[@type='button' and not(@disabled)]")
-        #     await Mt_dialog_ok.mouse_move()
-        #     await Mt_dialog_ok.mouse_click()
-
-        download_button = await chrome._tab.find(text="//button[@type='button' and .//span[@aria-label='download'] and .//span[text()='下載']]")
-        if not download_button:
-            await chrome.quit()
-            return None, None
-        if download_path == None:
-            download_path = Path.cwd() / "downloads"
-            download_path.mkdir(exist_ok=True)
-        else:
-            download_path = Path(download_path)
-        now = datetime.datetime.now()
-        directory_path = download_path / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}-{now.microsecond // 1000:03d}"
-        directory_path.mkdir(exist_ok=True)
-        await chrome._tab.set_download_path(directory_path)
-        await download_button.click()
-
-        torrent = await MteamUtils.check_file_downloaded(directory_path, '.torrent')
-        new_torrent_path = None
-        torrent_content = None
-        if torrent:
-            new_torrent_path = download_path / torrent.name
-            shutil.move(torrent, new_torrent_path)
-            with open(new_torrent_path, 'rb') as f:
-                torrent_content = f.read()
-            
-        directory_path.rmdir()
-        await chrome.quit()
-        return new_torrent_path, torrent_content
     
     @staticmethod
     def get_mteam_torrent_url(url, ua=None, referer=None, proxy=False):

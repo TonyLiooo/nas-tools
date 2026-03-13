@@ -67,43 +67,39 @@ class MTeam(_ISiteSigninHandler):
         chrome = ChromeHelper()
         if chrome.get_status():
             self.info(f"{site} 开始仿真签到")
-            # first, get html
-            msg, html_text = await self.__chrome_visit(chrome=chrome,
-                                                 url=sign_url,
-                                                 local_storage=local_storage,
-                                                 ua=ua,
-                                                 proxy=proxy,
-                                                 site=site)
+            try:
+                msg, html_text = await self.__chrome_visit(chrome=chrome,
+                                                     url=sign_url,
+                                                     local_storage=local_storage,
+                                                     ua=ua,
+                                                     proxy=proxy,
+                                                     site=site)
 
-            if not html_text:
+                if not html_text:
+                    return False, f"【{site}】${msg}"
+
+                if SiteHelper.is_logged_in(html_text) and local_storage:
+                    self.sites = Sites()
+                    local_storage = await chrome.get_local_storage()
+                    self.sites.update_site_local_storage(siteid=site_info.get("id"), local_storage=local_storage)
+
+                if "魔力值" in html_text:
+                    return True, f"【{site}】签到成功"
+
+                value = SystemConfig().get(key=SystemConfigKey.CookieUserInfo)
+
+                _, html_text, msg = await self.try_login(chrome, html_text, value.get("username"), value.get("password"), value.get("two_step_code"))
+
+                if not html_text:
+                    return False, f"【{site}】${msg}"
+
+                if "魔力值" in html_text:
+                    return True, f"【{site}】签到成功"
+
+                if "郵箱驗證碼" in html_text:
+                    return False, f"【{site}】触发邮箱登录，无法签到，请在站点管理处更新站点信息"
+            finally:
                 await chrome.quit()
-                return False, f"【{site}】${msg}"
-
-            if SiteHelper.is_logged_in(html_text) and local_storage:
-                self.sites = Sites()
-                local_storage = await chrome.get_local_storage()
-                self.sites.update_site_local_storage(siteid=site_info.get("id"), local_storage=local_storage)
-                
-            # second, check if it is home
-            if "魔力值" in html_text:
-                await chrome.quit()
-                return True, f"【{site}】签到成功"
-
-            # third check if login page and try login
-            value = SystemConfig().get(key=SystemConfigKey.CookieUserInfo)
-
-            _, html_text, msg = await self.try_login(chrome, html_text, value.get("username"), value.get("password"), value.get("two_step_code"))
-            await chrome.quit()
-            
-            if not html_text:
-                return False, f"【{site}】${msg}"
-
-            # second, check if it is home
-            if "魔力值" in html_text:
-                return True, f"【{site}】签到成功"
-
-            if "郵箱驗證碼" in html_text:
-                return False, f"【{site}】触发邮箱登录，无法签到，请在站点管理处更新站点信息"
         return False, f"【{site}】签到失败"
 
     async def try_login(self, chrome:ChromeHelper,

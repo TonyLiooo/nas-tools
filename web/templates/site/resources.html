@@ -90,16 +90,34 @@
                              value="{{ Result.uploadvolumefactor }}">
                       <input type="hidden" id="downloadvolumefactor_{{ loop.index0 }}"
                              value="{{ Result.downloadvolumefactor }}">
+                      <input type="hidden" id="hr_{{ loop.index0 }}"
+                             value="{% if Result.hr %}1{% else %}0{% endif %}">
+                      <input type="hidden" id="hr_days_{{ loop.index0 }}"
+                             value="{{ Result.hr_days or '' }}">
+                      <input type="hidden" id="free_deadline_{{ loop.index0 }}"
+                             value="{{ Result.free_deadline or '' }}">
                     </td>
                     <td>
                       <div class="font-weight-medium strong text-nowrap">
                         <a href="{{ Result.page_url }}" target="_blank">{{ Result.title }} </a>
+                        {% if Result.hr %}
+                          <span class="badge text-white bg-red ms-1">
+                            {% if Result.hr_days %}
+                              HR{{ Result.hr_days }}
+                            {% else %}
+                              HR
+                            {% endif %}
+                          </span>
+                        {% endif %}
                         {% if Result.uploadvolumefactor != 1.0 %}
                           <span class="badge text-white bg-azure">{{ (Result.uploadvolumefactor * 100) | int }}%UL</span>
                         {% endif %}
                         {% if Result.downloadvolumefactor != 1.0 %}
                           {% if Result.downloadvolumefactor == 0.0 %}
                             <span class="badge text-white bg-lime">FREE</span>
+                            {% if Result.free_deadline %}
+                              <span class="badge badge-outline text-teal ms-1">{{ Result.free_deadline }}</span>
+                            {% endif %}
                           {% else %}
                             <span class="badge text-white bg-blue">{{ (Result.downloadvolumefactor * 100) | int }}%DL</span>
                           {% endif %}

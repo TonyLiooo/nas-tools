@@ -130,6 +130,10 @@ class MetaBase(object):
     download_volume_factor = None
     # HR
     hit_and_run = None
+    # HR 做种天数（部分站点有）
+    hr_days = None
+    # 免费截止时间
+    free_deadline = None
     # 种子标签
     labels = None
     # 订阅ID
@@ -633,6 +637,8 @@ class MetaBase(object):
                          download_volume_factor=None,
                          rssid=None,
                          hit_and_run=None,
+                         hr_days=None,
+                         free_deadline=None,
                          imdbid=None,
                          over_edition=None,
                          labels=None):
@@ -664,6 +670,10 @@ class MetaBase(object):
             self.rssid = rssid
         if hit_and_run is not None:
             self.hit_and_run = hit_and_run
+        if hr_days is not None:
+            self.hr_days = hr_days
+        if free_deadline is not None:
+            self.free_deadline = free_deadline
         if imdbid is not None:
             self.imdb_id = imdbid
         if over_edition is not None:
@@ -873,6 +883,8 @@ class MetaBase(object):
             "upload_volume_factor": self.upload_volume_factor,
             "download_volume_factor": self.download_volume_factor,
             "hit_and_run": self.hit_and_run,
+            "hr_days": self.hr_days,
+            "free_deadline": self.free_deadline,
             "rssid": self.rssid,
             "save_path": self.save_path,
             "download_setting": self.download_setting,

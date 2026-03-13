@@ -86,6 +86,8 @@ class SiteSignin(object):
         else:
             return await self.__signin_base(site_info)
 
+    _CHROME_SIGNIN_TIMEOUT = 300
+
     async def __signin_base(self, site_info):
         """
         通用签到处理
@@ -95,6 +97,7 @@ class SiteSignin(object):
         if not site_info:
             return ""
         site = site_info.get("name")
+        chrome = None
         try:
             site_url = site_info.get("signurl")
             site_cookie = site_info.get("cookie")
@@ -105,95 +108,17 @@ class SiteSignin(object):
                 return ""
             chrome = ChromeHelper()
             if site_info.get("chrome") and chrome.get_status():
-                # 首页
                 log.info("【Sites】开始站点仿真签到：%s" % site)
-                home_url = StringUtils.get_base_url(site_url)
-                if "1ptba" in home_url:
-                    home_url = f"{home_url}/index.php"
-                
-                # 获取站点域名用于Profile管理
-                from urllib.parse import urlparse
-                site_domain = urlparse(home_url).netloc
-                
-                # 首先尝试使用已保存的浏览器数据（preserve_data=True）
-                if not await chrome.visit(url=home_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage,
-                                           proxy=site_info.get("proxy"), site_domain=site_domain, preserve_data=True):
-                    await chrome.quit()
-                    log.warn("【Sites】%s 无法打开网站" % site)
-                    return f"【{site}】仿真签到失败，无法打开网站！"
-                # 循环检测是否过cf
-                cloudflare = await chrome.pass_cloudflare()
-                if not cloudflare:
-                    await chrome.quit()
-                    log.warn("【Sites】%s 跳转站点失败" % site)
-                    return f"【{site}】仿真签到失败，跳转站点失败！"
-                
-                # 检查登录状态
-                logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
-                
-                # 如果登录失败，尝试注入新的cookie/localStorage
-                if not logged_in:
-                    log.debug(f"站点 {site} 使用缓存数据未登录，尝试注入新凭据")
-                    if await chrome.inject_credentials(home_url, cookie=site_cookie, local_storage=site_local_storage):
-                        logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
-                
-                # 判断是否已签到
-                html_text = await chrome.get_html()
-                if not html_text:
-                    await chrome.quit()
-                    log.warn("【Sites】%s 获取站点源码失败" % site)
-                    return f"【{site}】仿真签到失败，获取站点源码失败！"
-                    
-                if not logged_in and not SiteHelper.is_logged_in(html_text):
-                    await chrome.quit()
-                    log.warn("【Sites】%s 站点未登录" % site)
-                    return f"【{site}】仿真签到失败，站点未登录！"
-                    
-                # 查找签到按钮
-                html = etree.HTML(html_text)
-                xpath_str = None
-                for xpath in self.siteconf.get_checkin_conf():
-                    if html.xpath(xpath):
-                        xpath_str = xpath
-                        break
-                if re.search(r'已签|签到已得', html_text, re.IGNORECASE):
-                    await chrome.quit()
-                    log.info("【Sites】%s 今日已签到" % site)
-                    return f"【{site}】今日已签到"
-                if not xpath_str:
-                    await chrome.quit()
-                    if SiteHelper.is_logged_in(html_text):
-                        log.warn("【Sites】%s 未找到签到按钮，模拟登录成功" % site)
-                        return f"【{site}】模拟登录成功，已签到或无需签到"
-                    else:
-                        log.info("【Sites】%s 未找到签到按钮，且模拟登录失败" % site)
-                        return f"【{site}】模拟登录失败！"
-                # 开始仿真
                 try:
-                    checkin_obj = await chrome._tab.find(text=xpath_str, timeout=6)
-                    if checkin_obj:
-                        await checkin_obj.mouse_move()
-                        await checkin_obj.mouse_click()
-                        # 检测是否过cf
-                        await asyncio.sleep(3)
-                        if under_challenge(await chrome.get_html()):
-                            cloudflare = await chrome.pass_cloudflare()
-                            if not cloudflare:
-                                await chrome.quit()
-                                log.info("【Sites】%s 仿真签到失败，无法通过Cloudflare" % site)
-                                return f"【{site}】仿真签到失败，无法通过Cloudflare！"
-                        # 判断是否已签到   [签到已得125, 补签卡: 0]
-                        if re.search(r'已签|签到已得', await chrome.get_html(), re.IGNORECASE):
-                            await chrome.quit()
-                            return f"【{site}】签到成功"
-                        await chrome.quit()
-                        log.info("【Sites】%s 仿真签到成功" % site)
-                        return f"【{site}】仿真签到成功"
-                except Exception as e:
-                    ExceptionUtils.exception_traceback(e)
-                    await chrome.quit()
-                    log.warn("【Sites】%s 仿真签到失败：%s" % (site, str(e)))
-                    return f"【{site}】签到失败！"
+                    result = await asyncio.wait_for(
+                        self._chrome_signin(chrome, site_info, site, site_url, site_cookie, site_local_storage, ua),
+                        timeout=self._CHROME_SIGNIN_TIMEOUT
+                    )
+                    if result is not None:
+                        return result
+                except asyncio.TimeoutError:
+                    log.error(f"【Sites】{site} 仿真签到总超时({self._CHROME_SIGNIN_TIMEOUT}s)")
+                    return f"【{site}】仿真签到超时！"
             # 模拟登录
             else:
                 if site_url.find("attendance.php") != -1:
@@ -227,7 +152,65 @@ class SiteSignin(object):
                     return f"【{site}】{checkin_text}失败，无法打开网站！"
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
-            if chrome:
-                await chrome.quit()
             log.warn("【Sites】%s 签到失败：%s" % (site, str(e)))
             return f"【{site}】签到失败：{str(e)}！"
+        finally:
+            try:
+                if chrome:
+                    await chrome.quit()
+            except Exception:
+                pass
+
+    async def _chrome_signin(self, chrome, site_info, site, site_url, site_cookie, site_local_storage, ua):
+        home_url = StringUtils.get_base_url(site_url)
+        if "1ptba" in home_url:
+            home_url = f"{home_url}/index.php"
+        from urllib.parse import urlparse
+        site_domain = urlparse(home_url).netloc
+        if not await chrome.visit(url=home_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage,
+                                   proxy=site_info.get("proxy"), site_domain=site_domain, preserve_data=True):
+            log.warn("【Sites】%s 无法打开网站" % site)
+            return f"【{site}】仿真签到失败，无法打开网站！"
+        cloudflare = await chrome.pass_cloudflare()
+        if not cloudflare:
+            log.warn("【Sites】%s 跳转站点失败" % site)
+            return f"【{site}】仿真签到失败，跳转站点失败！"
+        logged_in = await SiteHelper.wait_for_logged_in(chrome._tab, timeout=15)
+        html_text = await chrome.get_html()
+        if not html_text:
+            log.warn("【Sites】%s 获取站点源码失败" % site)
+            return f"【{site}】仿真签到失败，获取站点源码失败！"
+        if not logged_in and not SiteHelper.is_logged_in(html_text):
+            log.warn("【Sites】%s 站点未登录" % site)
+            return f"【{site}】仿真签到失败，站点未登录！"
+        html = etree.HTML(html_text)
+        xpath_str = None
+        for xpath in self.siteconf.get_checkin_conf():
+            if html.xpath(xpath):
+                xpath_str = xpath
+                break
+        if re.search(r'已签|签到已得', html_text, re.IGNORECASE):
+            log.info("【Sites】%s 今日已签到" % site)
+            return f"【{site}】今日已签到"
+        if not xpath_str:
+            if SiteHelper.is_logged_in(html_text):
+                log.warn("【Sites】%s 未找到签到按钮，模拟登录成功" % site)
+                return f"【{site}】模拟登录成功，已签到或无需签到"
+            else:
+                log.info("【Sites】%s 未找到签到按钮，且模拟登录失败" % site)
+                return f"【{site}】模拟登录失败！"
+        checkin_obj = await chrome._tab.find(text=xpath_str, timeout=6)
+        if checkin_obj:
+            await checkin_obj.mouse_move()
+            await checkin_obj.mouse_click()
+            await asyncio.sleep(3)
+            if under_challenge(await chrome.get_html()):
+                cloudflare = await chrome.pass_cloudflare()
+                if not cloudflare:
+                    log.info("【Sites】%s 仿真签到失败，无法通过Cloudflare" % site)
+                    return f"【{site}】仿真签到失败，无法通过Cloudflare！"
+            if re.search(r'已签|签到已得', await chrome.get_html(), re.IGNORECASE):
+                return f"【{site}】签到成功"
+            log.info("【Sites】%s 仿真签到成功" % site)
+            return f"【{site}】仿真签到成功"
+        return None

@@ -260,14 +260,13 @@ class SiteConf:
     async def __get_site_page_html(url, cookie, local_storage=None, ua=None, render=False, proxy=False):
         chrome = ChromeHelper()
         if (render or local_storage) and chrome.get_status():
-            # 开渲染
-            if await chrome.visit(url=url, cookie=cookie, local_storage=local_storage, ua=ua, proxy=proxy):
-                if await SiteHelper.wait_for_logged_in(chrome._tab):
-                    # 等待页面加载完成
-                    # await asyncio.sleep(10)
-                    html = await chrome.get_html()
-                    await chrome.quit()
-                    return html
+            try:
+                if await chrome.visit(url=url, cookie=cookie, local_storage=local_storage, ua=ua, proxy=proxy):
+                    if await SiteHelper.wait_for_logged_in(chrome._tab):
+                        return await chrome.get_html()
+                return ""
+            finally:
+                await chrome.quit()
         else:
             res = RequestUtils(
                 cookies=cookie,
@@ -277,5 +276,4 @@ class SiteConf:
             if res and res.status_code == 200:
                 res.encoding = res.apparent_encoding
                 return res.text
-        await chrome.quit()
         return ""

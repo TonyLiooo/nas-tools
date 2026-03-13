@@ -72,249 +72,198 @@ class SiteCookie(object):
         """
         if not url or not username or not password:
             return None, None, None, "参数错误"
-        # 全局锁
         chrome = ChromeHelper()
         if not chrome.get_status():
             return None, None, None, "需要浏览器内核环境才能更新站点信息"
-        if not await chrome.visit(url=url, proxy=proxy, ua=ua):
-            await chrome.quit()
-            return None, None, None, "Chrome模拟访问失败"
-        # 循环检测是否过cf
-        cloudflare = await chrome.pass_cloudflare()
-        if not cloudflare:
-            await chrome.quit()
-            return None, None, None, "跳转站点失败，无法通过Cloudflare验证"
-        await chrome._tab
-        # 登录页面代码
         try:
-            await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
-        except:
-            pass
-        await asyncio.sleep(3)
-        html_text = await chrome.get_html()
-        if not html_text:
-            await chrome.quit()
-            return None, None, None, "获取源码失败"
-        if SiteHelper.is_logged_in(html_text):
-            cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
-            local_storage = await chrome.get_local_storage()
-            await chrome.quit()
-            return cookies, local_storage, ua, "已经登录过且Cookie未失效"
-        # 站点配置
-        login_conf = self.siteconf.get_login_conf()
-        end_time = time.monotonic() + 20
-
-        while time.monotonic() < end_time:
+            if not await chrome.visit(url=url, proxy=proxy, ua=ua):
+                return None, None, None, "Chrome模拟访问失败"
+            cloudflare = await chrome.pass_cloudflare()
+            if not cloudflare:
+                return None, None, None, "跳转站点失败，无法通过Cloudflare验证"
+            await chrome._tab
+            try:
+                await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 30)
+            except:
+                pass
+            await asyncio.sleep(3)
             html_text = await chrome.get_html()
-            html = etree.HTML(html_text)
-            username_xpath = self.xpath_search(html, login_conf.get("username"))
-            password_xpath = self.xpath_search(html, login_conf.get("password"))
-            submit_xpath = self.xpath_search(html, login_conf.get("submit"))
-            if username_xpath and password_xpath and submit_xpath:
-                break
-            await asyncio.sleep(1)
+            if not html_text:
+                return None, None, None, "获取源码失败"
+            if SiteHelper.is_logged_in(html_text):
+                cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
+                local_storage = await chrome.get_local_storage()
+                return cookies, local_storage, ua, "已经登录过且Cookie未失效"
+            login_conf = self.siteconf.get_login_conf()
+            end_time = time.monotonic() + 20
 
-        # 查找用户名输入框
-        if not username_xpath:
-            await chrome.quit()
-            return None, None, None, "未找到用户名输入框"
-        # 查找密码输入框
-        if not password_xpath:
-            await chrome.quit()
-            return None, None, None, "未找到密码输入框"
-        # 查找两步验证码
-        twostepcode_xpath = self.xpath_search(html, login_conf.get("twostep"))
-        # 查找验证码输入框
-        captcha_xpath = self.xpath_search(html, login_conf.get("captcha"))
-        # 查找验证码图片
-        captcha_img_url = None
-        if captcha_xpath:
-            for xpath in login_conf.get("captcha_img"):
-                if html.xpath(xpath):
-                    captcha_img_url = html.xpath(xpath)[0]
-                    break
-            if not captcha_img_url:
-                await chrome.quit()
-                return None, None, None, "未找到验证码图片"
-        # 查找登录按钮
-        if not submit_xpath:
-            await chrome.quit()
-            return None, None, None, "未找到登录按钮"
-        # 点击登录按钮
-        try:
-            submit_obj = await chrome.element_to_be_clickable(submit_xpath, timeout=6)
-            if submit_obj:
-                # 输入用户名
-                username_element = await chrome._tab.find(username_xpath)
-                await username_element.send_keys(username)
-                # 输入密码
-                password_element = await chrome._tab.find(password_xpath)
-                await password_element.send_keys(password)
-                # 输入两步验证码
-                if twostepcode and twostepcode_xpath:
-                    twostepcode_element = await chrome.element_to_be_clickable(twostepcode_xpath, timeout=6)
-                    if twostepcode_element:
-                        await twostepcode_element.send_keys(twostepcode)
-                # 识别验证码
-                if captcha_xpath:
-                    captcha_element = await chrome.element_to_be_clickable(captcha_xpath, timeout=6)
-                    if captcha_element:
-                        code_url = self.__get_captcha_url(url, captcha_img_url)
-                        if ocrflag:
-                            # 自动OCR识别验证码
-                            captcha = await self.get_captcha_text(chrome, code_url, proxy)
-                            if captcha:
-                                log.info("【Sites】验证码地址为：%s，识别结果：%s" % (code_url, captcha))
-                            else:
-                                await chrome.quit()
-                                return None, None, None, "验证码识别失败"
-                        else:
-                            # 等待用户输入
-                            captcha = None
-                            code_bin = None
-                            code_key = StringUtils.generate_random_str(5)
-                            for sec in range(60, 0, -1):
-                                if self.get_code(code_key):
-                                    # 用户输入了
-                                    captcha = self.get_code(code_key)
-                                    log.info("【Sites】接收到验证码：%s" % captcha)
-                                    self.progress.update(ptype=ProgressKey.SiteCookie,
-                                                         text="接收到验证码：%s" % captcha)
-                                    break
-                                else:
-                                    # 获取验证码图片base64
-                                    if not code_bin:
-                                        code_bin = await self.get_captcha_base64(chrome, code_url, proxy)
-                                        if not code_bin:
-                                            await chrome.quit()
-                                            return None, None, None, "获取验证码图片数据失败"
-                                    else:
-                                        code_bin = f"data:image/png;base64,{code_bin}"
-                                    # 推送到前端
-                                    self.progress.update(ptype=ProgressKey.SiteCookie,
-                                                         text=f"{code_bin}|{code_key}")
-                                    time.sleep(1)
-                            if not captcha:
-                                await chrome.quit()
-                                return None, None, None, "验证码输入超时"
-                        # 输入验证码
-                        await captcha_element.send_keys(captcha)
-                    else:
-                        # 不可见元素不处理
-                        pass
-                # 提交登录
-                await submit_obj.mouse_move()
-                await submit_obj.mouse_click()
-                # 等待页面刷新完毕
-                await chrome.element_not_to_be_clickable(submit_xpath, timeout=6)
-                await chrome._tab
-                try:
-                    await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 20)
-                except:
-                    pass
-            else:
-                await chrome.quit()
-                return None, None, None, "未找到登录按钮"
-        except Exception as e:
-            ExceptionUtils.exception_traceback(e)
-            return None, None, None, "仿真登录失败：%s" % str(e)
-        logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
-        if logged_in:
-            cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
-            local_storage = await chrome.get_local_storage()
-            await chrome.quit()
-            return cookies, local_storage, ua, ""
-        else:
-            if url.find("m-team") != -1:
+            while time.monotonic() < end_time:
                 html_text = await chrome.get_html()
-                if "郵箱驗證碼" in html_text:
-                    await asyncio.sleep(5)
-                    # email handler
-                    email_xpath = '//input[@id="email"]'
-                    email_send_xpath = '//div[@id="code"]/button'
-                    code_xpath = '//div[@id="code"]/input'
-                    login_submit_xpath = '//button[@type="submit"]'
-
-                    # get user input email
-                    email = None
-                    code_key = StringUtils.generate_random_str(5)
-                    for sec in range(60, 0, -1):
-                        if self.get_code(code_key):
-                            # 用户输入了
-                            email = self.get_code(code_key)
-                            log.info("【Sites】接收到 email：%s" % email)
-                            self.progress.update(ptype=ProgressKey.SiteCookie,
-                                                 text="接收到 email：%s" % email)
-                            break
-                        else:
-                            # get email
-                            code_bin = f"data:email"
-                            # 推送到前端
-                            self.progress.update(ptype=ProgressKey.SiteCookie,
-                                                 text=f"{code_bin}|{code_key}")
-                            await asyncio.sleep(1)
-                    if not email:
-                        await chrome.quit()
-                        return None, None, None, "email 输入超时"
-                    email_element = await chrome._tab.find(email_xpath)
-                    await email_element.send_keys(email)
-                    await asyncio.sleep(1)
-                    # click send email
-                    email_send_obj = await chrome.element_to_be_clickable(email_send_xpath, timeout=10)
-                    if email_send_obj:
-                        await email_send_obj.mouse_move()
-                        await email_send_obj.mouse_click()
-                    await asyncio.sleep(1)
-                    # get user input code
-                    email_verify_code = None
-                    code_key = StringUtils.generate_random_str(5)
-                    for sec in range(60, 0, -1):
-                        if self.get_code(code_key):
-                            # 用户输入了
-                            email_verify_code = self.get_code(code_key)
-                            log.info("【Sites】接收到邮箱验证码：%s" % email_verify_code)
-                            self.progress.update(ptype=ProgressKey.SiteCookie,
-                                                 text="接收到邮箱验证码：%s" % email_verify_code)
-                            break
-                        else:
-                            code_bin = f"data:email_verify_code"
-                            # 推送到前端
-                            self.progress.update(ptype=ProgressKey.SiteCookie,
-                                                 text=f"{code_bin}|{code_key}")
-                            await asyncio.sleep(1)
-                    if not email_verify_code:
-                        await chrome.quit()
-                        return None, None, None, "email 验证码输入超时"
-                    email_verify_element = await chrome._tab.find(code_xpath)
-                    await email_verify_element.send_keys(email_verify_code)
-
-                    # submit again try refresh, check again
-                    login_submit_obj = await chrome.element_to_be_clickable(login_submit_xpath, timeout=10)
-                    if login_submit_obj:
-                        await login_submit_obj.mouse_move()
-                        await login_submit_obj.mouse_click()
-                        # 等待页面刷新完毕
-                        await chrome.element_not_to_be_clickable(login_submit_xpath, timeout=20)
-
-                    # check again
-                    logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
-                    if logged_in:
-                        cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
-                        local_storage = await chrome.get_local_storage()
-                        await chrome.quit()
-                        return cookies, local_storage, ua, ""
-            await chrome.quit()
-            # 读取错误信息
-            error_xpath = None
-            for xpath in login_conf.get("error"):
-                if html.xpath(xpath):
-                    error_xpath = xpath
+                html = etree.HTML(html_text)
+                username_xpath = self.xpath_search(html, login_conf.get("username"))
+                password_xpath = self.xpath_search(html, login_conf.get("password"))
+                submit_xpath = self.xpath_search(html, login_conf.get("submit"))
+                if username_xpath and password_xpath and submit_xpath:
                     break
-            if not error_xpath:
-                return None, None, None, "登录失败"
+                await asyncio.sleep(1)
+
+            if not username_xpath:
+                return None, None, None, "未找到用户名输入框"
+            if not password_xpath:
+                return None, None, None, "未找到密码输入框"
+            twostepcode_xpath = self.xpath_search(html, login_conf.get("twostep"))
+            captcha_xpath = self.xpath_search(html, login_conf.get("captcha"))
+            captcha_img_url = None
+            if captcha_xpath:
+                for xpath in login_conf.get("captcha_img"):
+                    if html.xpath(xpath):
+                        captcha_img_url = html.xpath(xpath)[0]
+                        break
+                if not captcha_img_url:
+                    return None, None, None, "未找到验证码图片"
+            if not submit_xpath:
+                return None, None, None, "未找到登录按钮"
+            try:
+                submit_obj = await chrome.element_to_be_clickable(submit_xpath, timeout=6)
+                if submit_obj:
+                    username_element = await chrome._tab.find(username_xpath)
+                    await username_element.send_keys(username)
+                    password_element = await chrome._tab.find(password_xpath)
+                    await password_element.send_keys(password)
+                    if twostepcode and twostepcode_xpath:
+                        twostepcode_element = await chrome.element_to_be_clickable(twostepcode_xpath, timeout=6)
+                        if twostepcode_element:
+                            await twostepcode_element.send_keys(twostepcode)
+                    if captcha_xpath:
+                        captcha_element = await chrome.element_to_be_clickable(captcha_xpath, timeout=6)
+                        if captcha_element:
+                            code_url = self.__get_captcha_url(url, captcha_img_url)
+                            if ocrflag:
+                                captcha = await self.get_captcha_text(chrome, code_url, proxy)
+                                if captcha:
+                                    log.info("【Sites】验证码地址为：%s，识别结果：%s" % (code_url, captcha))
+                                else:
+                                    return None, None, None, "验证码识别失败"
+                            else:
+                                captcha = None
+                                code_bin = None
+                                code_key = StringUtils.generate_random_str(5)
+                                for sec in range(60, 0, -1):
+                                    if self.get_code(code_key):
+                                        captcha = self.get_code(code_key)
+                                        log.info("【Sites】接收到验证码：%s" % captcha)
+                                        self.progress.update(ptype=ProgressKey.SiteCookie,
+                                                             text="接收到验证码：%s" % captcha)
+                                        break
+                                    else:
+                                        if not code_bin:
+                                            code_bin = await self.get_captcha_base64(chrome, code_url, proxy)
+                                            if not code_bin:
+                                                return None, None, None, "获取验证码图片数据失败"
+                                        else:
+                                            code_bin = f"data:image/png;base64,{code_bin}"
+                                        self.progress.update(ptype=ProgressKey.SiteCookie,
+                                                             text=f"{code_bin}|{code_key}")
+                                        time.sleep(1)
+                                if not captcha:
+                                    return None, None, None, "验证码输入超时"
+                            await captcha_element.send_keys(captcha)
+                        else:
+                            pass
+                    await submit_obj.mouse_move()
+                    await submit_obj.mouse_click()
+                    await chrome.element_not_to_be_clickable(submit_xpath, timeout=6)
+                    await chrome._tab
+                    try:
+                        await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 20)
+                    except:
+                        pass
+                else:
+                    return None, None, None, "未找到登录按钮"
+            except Exception as e:
+                ExceptionUtils.exception_traceback(e)
+                return None, None, None, "仿真登录失败：%s" % str(e)
+            logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+            if logged_in:
+                cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
+                local_storage = await chrome.get_local_storage()
+                return cookies, local_storage, ua, ""
             else:
-                error_msg = html.xpath(error_xpath)[0]
-                return None, None, None, error_msg
+                if url.find("m-team") != -1:
+                    html_text = await chrome.get_html()
+                    if "郵箱驗證碼" in html_text:
+                        await asyncio.sleep(5)
+                        email_xpath = '//input[@id="email"]'
+                        email_send_xpath = '//div[@id="code"]/button'
+                        code_xpath = '//div[@id="code"]/input'
+                        login_submit_xpath = '//button[@type="submit"]'
+
+                        email = None
+                        code_key = StringUtils.generate_random_str(5)
+                        for sec in range(60, 0, -1):
+                            if self.get_code(code_key):
+                                email = self.get_code(code_key)
+                                log.info("【Sites】接收到 email：%s" % email)
+                                self.progress.update(ptype=ProgressKey.SiteCookie,
+                                                     text="接收到 email：%s" % email)
+                                break
+                            else:
+                                code_bin = f"data:email"
+                                self.progress.update(ptype=ProgressKey.SiteCookie,
+                                                     text=f"{code_bin}|{code_key}")
+                                await asyncio.sleep(1)
+                        if not email:
+                            return None, None, None, "email 输入超时"
+                        email_element = await chrome._tab.find(email_xpath)
+                        await email_element.send_keys(email)
+                        await asyncio.sleep(1)
+                        email_send_obj = await chrome.element_to_be_clickable(email_send_xpath, timeout=10)
+                        if email_send_obj:
+                            await email_send_obj.mouse_move()
+                            await email_send_obj.mouse_click()
+                        await asyncio.sleep(1)
+                        email_verify_code = None
+                        code_key = StringUtils.generate_random_str(5)
+                        for sec in range(60, 0, -1):
+                            if self.get_code(code_key):
+                                email_verify_code = self.get_code(code_key)
+                                log.info("【Sites】接收到邮箱验证码：%s" % email_verify_code)
+                                self.progress.update(ptype=ProgressKey.SiteCookie,
+                                                     text="接收到邮箱验证码：%s" % email_verify_code)
+                                break
+                            else:
+                                code_bin = f"data:email_verify_code"
+                                self.progress.update(ptype=ProgressKey.SiteCookie,
+                                                     text=f"{code_bin}|{code_key}")
+                                await asyncio.sleep(1)
+                        if not email_verify_code:
+                            return None, None, None, "email 验证码输入超时"
+                        email_verify_element = await chrome._tab.find(code_xpath)
+                        await email_verify_element.send_keys(email_verify_code)
+
+                        login_submit_obj = await chrome.element_to_be_clickable(login_submit_xpath, timeout=10)
+                        if login_submit_obj:
+                            await login_submit_obj.mouse_move()
+                            await login_submit_obj.mouse_click()
+                            await chrome.element_not_to_be_clickable(login_submit_xpath, timeout=20)
+
+                        logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
+                        if logged_in:
+                            cookies, ua = await chrome.get_cookies(), await chrome.get_ua()
+                            local_storage = await chrome.get_local_storage()
+                            return cookies, local_storage, ua, ""
+                error_xpath = None
+                for xpath in login_conf.get("error"):
+                    if html.xpath(xpath):
+                        error_xpath = xpath
+                        break
+                if not error_xpath:
+                    return None, None, None, "登录失败"
+                else:
+                    error_msg = html.xpath(error_xpath)[0]
+                    return None, None, None, error_msg
+        finally:
+            await chrome.quit()
 
     async def get_captcha_text(self, chrome, code_url, proxy=None):
         """

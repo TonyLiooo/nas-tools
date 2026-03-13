@@ -360,6 +360,9 @@ class SEARCHRESULTINFO(Base):
     UPLOAD_VOLUME_FACTOR = Column(Float)
     DOWNLOAD_VOLUME_FACTOR = Column(Float)
     NOTE = Column(Text)
+    HR = Column(Integer, default=0)
+    HR_DAYS = Column(Integer, nullable=True)
+    FREE_DEADLINE = Column(Text, nullable=True)
 
 
 class SITEBRUSHTASK(Base):

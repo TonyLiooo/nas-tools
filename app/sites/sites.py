@@ -352,38 +352,36 @@ class Sites:
             site_url = site_url + '/index.php'
         chrome = ChromeHelper()
         if site_info.get("chrome") and chrome.get_status():
-            # 计时
-            start_time = datetime.now()
-            if not await chrome.visit(url=site_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, timeout=60, proxy=site_info.get("proxy")):
+            try:
+                # 计时
+                start_time = datetime.now()
+                if not await chrome.visit(url=site_url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, timeout=60, proxy=site_info.get("proxy")):
+                    return False, "Chrome模拟访问失败", 0, web_data
+                # 循环检测是否过cf
+                cloudflare = await chrome.pass_cloudflare()
+                seconds = int((datetime.now() - start_time).total_seconds() * 1000)
+                if not cloudflare:
+                    return False, "跳转站点失败", seconds, web_data
+                # 判断是否已签到
+                html_text = await chrome.get_html()
+                if not html_text:
+                    return False, "获取站点源码失败", 0, web_data
+                tnode_token = None
+                if SiteHelper.is_tnode(html_text):
+                    tnode_token = SiteHelper.extract_csrf_token(html_text) 
+                if await SiteHelper.wait_for_logged_in(chrome._tab) or tnode_token:
+                    site_cookie = await chrome.get_cookies(str_format=False)
+                    site_local_storage = await chrome.get_local_storage()
+                    if site_cookie:
+                        web_data["cookies"] = site_cookie
+                    if site_local_storage:
+                        web_data["local_storage"] = json.loads(site_local_storage)
+                        self.update_site_local_storage(siteid=site_id, local_storage=site_local_storage)
+                    return True, "连接成功", seconds, web_data
+                else:
+                    return False, "Cookie/Local Storage失效", seconds, web_data
+            finally:
                 await chrome.quit()
-                return False, "Chrome模拟访问失败", 0, web_data
-            # 循环检测是否过cf
-            cloudflare = await chrome.pass_cloudflare()
-            seconds = int((datetime.now() - start_time).total_seconds() * 1000)
-            if not cloudflare:
-                await chrome.quit()
-                return False, "跳转站点失败", seconds, web_data
-            # 判断是否已签到
-            html_text = await chrome.get_html()
-            if not html_text:
-                await chrome.quit()
-                return False, "获取站点源码失败", 0, web_data
-            tnode_token = None
-            if SiteHelper.is_tnode(html_text):
-                tnode_token = SiteHelper.extract_csrf_token(html_text) 
-            if await SiteHelper.wait_for_logged_in(chrome._tab) or tnode_token:
-                site_cookie = await chrome.get_cookies(str_format=False)
-                site_local_storage = await chrome.get_local_storage()
-                if site_cookie:
-                    web_data["cookies"] = site_cookie
-                if site_local_storage:
-                    web_data["local_storage"] = json.loads(site_local_storage)
-                    self.update_site_local_storage(siteid=site_id, local_storage=site_local_storage)
-                await chrome.quit()
-                return True, "连接成功", seconds, web_data
-            else:
-                await chrome.quit()
-                return False, "Cookie/Local Storage失效", seconds, web_data
         else:
             if site_url.find("m-team") != -1:
                 return self.mteam_test_connection(site_info), web_data

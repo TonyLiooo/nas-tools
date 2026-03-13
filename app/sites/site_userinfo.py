@@ -32,6 +32,7 @@ class SiteUserInfo(object):
     _last_update_time = None
     _sites_data = {}
     _SUPPRESS_NOTIFY_WINDOW = 60
+    _CHROME_OPERATION_TIMEOUT = 180
 
     def __init__(self):
         self.is_updating = False
@@ -91,113 +92,116 @@ class SiteUserInfo(object):
 
         # 检测环境，有浏览器内核的优先使用仿真签到
         chrome = ChromeHelper()
-        if emulate and chrome.get_status():
-            # 获取站点域名用于Profile管理
-            site_domain = urlparse(url).netloc
-            
-            # 首先尝试使用已保存的浏览器数据（preserve_data=True）
-            if not await chrome.visit(url=url, ua=ua, cookie=site_cookie, local_storage=site_local_storage, 
-                                       proxy=proxy, site_domain=site_domain, preserve_data=True):
-                log.error("【Sites】%s 无法打开网站" % site_name)
-                return None
-            # 循环检测是否过cf
-            cloudflare = await chrome.pass_cloudflare()
-            if not cloudflare:
-                log.error("【Sites】%s 跳转站点失败" % site_name)
-                return None
-            logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
-            html_text = await chrome.get_html()
-            
-            # 如果登录失败，尝试注入新的cookie/localStorage
-            if not logged_in:
-                log.debug(f"【Sites】站点 {site_name} 使用缓存数据未登录，尝试注入新凭据")
-                if await chrome.inject_credentials(url, cookie=site_cookie, local_storage=site_local_storage):
-                    logged_in = await SiteHelper.wait_for_logged_in(chrome._tab)
-                    html_text = await chrome.get_html()
-            
-            if not logged_in:
-                log.error("【Sites】%s 站点未登录" % site_name)
-                return None
-            logged_in = SiteHelper.is_logged_in(html_text)
-            if not logged_in:
-                log.error("【Sites】%s 站点未登录2" % site_name)
-                return None
-            
-            # 登录成功，更新保存的cookie和localStorage
-            if site_local_storage:
-                local_storage = await chrome.get_local_storage()
-                self.sites.update_site_local_storage(siteid=site_id, local_storage=local_storage)
-        else:
-            proxies = Config().get_proxies() if proxy else None
-            res = RequestUtils(cookies=site_cookie,
-                               session=session,
-                               headers=ua,
-                               proxies=proxies,
-                               timeout=(10, 20)
-                               ).get_res(url=url)
-            if res and res.status_code == 200:
-                if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
-                    res.encoding = "UTF-8"
-                else:
-                    res.encoding = res.apparent_encoding
-                html_text = res.text
-                # 第一次登录反爬
-                if html_text.find("title") == -1:
-                    i = html_text.find("window.location")
-                    if i == -1:
-                        return None
-                    tmp_url = url + html_text[i:html_text.find(";")] \
-                        .replace("\"", "").replace("+", "").replace(" ", "").replace("window.location=", "")
-                    res = RequestUtils(cookies=site_cookie,
-                                       session=session,
-                                       headers=ua,
-                                       proxies=proxies,
-                                       timeout=(10, 20)
-                                       ).get_res(url=tmp_url)
-                    if res and res.status_code == 200:
-                        if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
-                            res.encoding = "UTF-8"
-                        else:
-                            res.encoding = res.apparent_encoding
-                        html_text = res.text
-                        if not html_text:
-                            return None
-                    else:
-                        log.error("【Sites】站点 %s 被反爬限制：%s, 状态码：%s" % (site_name, url, res.status_code))
-                        return None
-
-                # 兼容假首页情况，假首页通常没有 <link rel="search" 属性
-                if '"search"' not in html_text and '"csrf-token"' not in html_text:
-                    res = RequestUtils(cookies=site_cookie,
-                                       session=session,
-                                       headers=ua,
-                                       proxies=proxies,
-                                       timeout=(10, 20)
-                                       ).get_res(url=url + "/index.php")
-                    if res and res.status_code == 200:
-                        if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
-                            res.encoding = "UTF-8"
-                        else:
-                            res.encoding = res.apparent_encoding
-                        html_text = res.text
-                        if not html_text:
-                            return None
-            elif res is not None:
-                log.error(f"【Sites】站点 {site_name} 连接失败，状态码：{res.status_code}")
-                return None
+        chrome_started = False
+        try:
+            if emulate and chrome.get_status():
+                chrome_started = True
+                try:
+                    html_text = await asyncio.wait_for(
+                        self._chrome_get_html(chrome, url, site_id, site_name, site_cookie, site_local_storage, proxy),
+                        timeout=self._CHROME_OPERATION_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    log.error(f"【Sites】{site_name} 浏览器操作总超时({self._CHROME_OPERATION_TIMEOUT}s)")
+                    return None
+                if not html_text:
+                    return None
             else:
-                log.error(f"【Sites】站点 {site_name} 无法访问：{url}")
-                return None
-        # 解析站点类型
-        site_schema = self.__build_class(html_text)
-        if not site_schema:
-            log.error("【Sites】站点 %s 无法识别站点类型" % site_name)
-            return None
+                proxies = Config().get_proxies() if proxy else None
+                res = RequestUtils(cookies=site_cookie,
+                                   session=session,
+                                   headers=ua,
+                                   proxies=proxies,
+                                   timeout=(10, 20)
+                                   ).get_res(url=url)
+                if res and res.status_code == 200:
+                    if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
+                        res.encoding = "UTF-8"
+                    else:
+                        res.encoding = res.apparent_encoding
+                    html_text = res.text
+                    # 第一次登录反爬
+                    if html_text.find("title") == -1:
+                        i = html_text.find("window.location")
+                        if i == -1:
+                            return None
+                        tmp_url = url + html_text[i:html_text.find(";")] \
+                            .replace("\"", "").replace("+", "").replace(" ", "").replace("window.location=", "")
+                        res = RequestUtils(cookies=site_cookie,
+                                           session=session,
+                                           headers=ua,
+                                           proxies=proxies,
+                                           timeout=(10, 20)
+                                           ).get_res(url=tmp_url)
+                        if res and res.status_code == 200:
+                            if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
+                                res.encoding = "UTF-8"
+                            else:
+                                res.encoding = res.apparent_encoding
+                            html_text = res.text
+                            if not html_text:
+                                return None
+                        else:
+                            log.error("【Sites】站点 %s 被反爬限制：%s, 状态码：%s" % (site_name, url, res.status_code))
+                            return None
 
-        parsed_url = urlparse(url)
-        if parsed_url.netloc:
-            site_domain_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
-        return site_schema(site_name, site_domain_url, site_cookie, site_local_storage = site_local_storage, index_html = html_text, session=session, ua=ua, emulate=emulate, proxy=proxy, chrome=chrome)
+                    # 兼容假首页情况，假首页通常没有 <link rel="search" 属性
+                    if '"search"' not in html_text and '"csrf-token"' not in html_text:
+                        res = RequestUtils(cookies=site_cookie,
+                                           session=session,
+                                           headers=ua,
+                                           proxies=proxies,
+                                           timeout=(10, 20)
+                                           ).get_res(url=url + "/index.php")
+                        if res and res.status_code == 200:
+                            if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
+                                res.encoding = "UTF-8"
+                            else:
+                                res.encoding = res.apparent_encoding
+                            html_text = res.text
+                            if not html_text:
+                                return None
+                elif res is not None:
+                    log.error(f"【Sites】站点 {site_name} 连接失败，状态码：{res.status_code}")
+                    return None
+                else:
+                    log.error(f"【Sites】站点 {site_name} 无法访问：{url}")
+                    return None
+            # 解析站点类型
+            site_schema = self.__build_class(html_text)
+            if not site_schema:
+                log.error("【Sites】站点 %s 无法识别站点类型" % site_name)
+                return None
+
+            parsed_url = urlparse(url)
+            if parsed_url.netloc:
+                site_domain_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
+            chrome_started = False
+            return site_schema(site_name, site_domain_url, site_cookie, site_local_storage = site_local_storage, index_html = html_text, session=session, ua=ua, emulate=emulate, proxy=proxy, chrome=chrome)
+        finally:
+            if chrome_started:
+                await chrome.quit()
+
+    async def _chrome_get_html(self, chrome, url, site_id, site_name, site_cookie, site_local_storage, proxy):
+        site_domain = urlparse(url).netloc
+        if not await chrome.visit(url=url, ua=None, cookie=site_cookie, local_storage=site_local_storage,
+                                   proxy=proxy, site_domain=site_domain, preserve_data=True):
+            log.error("【Sites】%s 无法打开网站" % site_name)
+            return None
+        cloudflare = await chrome.pass_cloudflare()
+        if not cloudflare:
+            log.error("【Sites】%s 跳转站点失败" % site_name)
+            return None
+        # 页面已由visit()加载并注入凭据，用较短超时检测登录状态
+        logged_in = await SiteHelper.wait_for_logged_in(chrome._tab, timeout=15)
+        html_text = await chrome.get_html()
+        if not logged_in:
+            log.warn(f"【Sites】{site_name} 站点未登录")
+            return None
+        if site_local_storage:
+            local_storage = await chrome.get_local_storage()
+            self.sites.update_site_local_storage(siteid=site_id, local_storage=local_storage)
+        return html_text
 
     async def __refresh_site_data(self, site_info):
         """

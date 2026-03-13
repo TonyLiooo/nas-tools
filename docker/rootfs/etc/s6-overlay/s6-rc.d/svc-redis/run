@@ -1,29 +1,53 @@
 #!/usr/bin/with-contenv bash
 # shellcheck shell=bash
 
-function __debug {
-
-exec \
-    s6-notifyoncheck -d -n 300 -w 1000 -c "nc -z localhost 6379" \
-    s6-setuidgid root $(which redis-server)
-
-}
-
-function __false {
-
-exec \
-    s6-notifyoncheck -d -n 300 -w 1000 -c "nc -z localhost 6379" \
-    s6-setuidgid root $(which redis-server) > /dev/null 2>&1
-
-}
-
+# 从配置读取 Redis 端口
 if [ -f ${NASTOOL_CONFIG} ]; then
-    NT_LOG=$(python3 -c "import yaml; print(yaml.safe_load(open('/config/config.yaml'))['app']['loglevel'])")
-    if [[ "${NT_LOG}" == "debug" ]]; then
-        __debug
-    else
-        __false
+    REDIS_PORT=$(python3 -c "import yaml; c=yaml.safe_load(open('${NASTOOL_CONFIG}')); print((c or {}).get('app',{}).get('redis_port', 6379))" 2>/dev/null)
+fi
+REDIS_PORT=${REDIS_PORT:-6379}
+
+# 端口冲突检测：如果端口已被占用（非 redis-server），自动切换到空闲端口
+if nc -z localhost ${REDIS_PORT} 2>/dev/null; then
+    NEW_PORT=$(python3 -c "
+import socket, sys
+try:
+    import ruamel.yaml
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(('127.0.0.1', 0))
+    port = s.getsockname()[1]
+    s.close()
+    cfg_path = '${NASTOOL_CONFIG}'
+    y = ruamel.yaml.YAML()
+    with open(cfg_path) as f:
+        cfg = y.load(f)
+    if not cfg.get('app'):
+        cfg['app'] = {}
+    cfg['app']['redis_port'] = port
+    with open(cfg_path, 'w') as f:
+        y.dump(cfg, f)
+    print(port)
+except Exception as e:
+    print(6379, file=sys.stderr)
+    print(6379)
+" 2>/dev/null)
+    if [ -n "${NEW_PORT}" ]; then
+        REDIS_PORT=${NEW_PORT}
     fi
+fi
+
+# 读取日志级别
+NT_LOG=""
+if [ -f ${NASTOOL_CONFIG} ]; then
+    NT_LOG=$(python3 -c "import yaml; c=yaml.safe_load(open('${NASTOOL_CONFIG}')); print((c or {}).get('app',{}).get('loglevel', 'info'))" 2>/dev/null)
+fi
+
+if [[ "${NT_LOG}" == "debug" ]]; then
+    exec \
+        s6-notifyoncheck -d -n 300 -w 1000 -c "nc -z localhost ${REDIS_PORT}" \
+        s6-setuidgid root $(which redis-server) --port ${REDIS_PORT}
 else
-    __false
+    exec \
+        s6-notifyoncheck -d -n 300 -w 1000 -c "nc -z localhost ${REDIS_PORT}" \
+        s6-setuidgid root $(which redis-server) --port ${REDIS_PORT} > /dev/null 2>&1
 fi

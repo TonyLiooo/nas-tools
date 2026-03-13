@@ -62,7 +62,7 @@ class ChromeHelper(object):
     
     # 站点Profile管理
     _SITE_PROFILES_DIR = "chrome_profiles"  # 相对于config目录
-    _SITE_PROFILE_MAX_AGE_DAYS = 7  # Profile过期天数
+    _SITE_PROFILE_MAX_AGE_DAYS = 30  # Profile过期天数
     _site_profile_locks = {}  # 站点Profile锁字典 {site_domain: FileLock}
     _site_profile_locks_lock = threading.Lock()  # 保护锁字典的锁
     
@@ -71,6 +71,7 @@ class ChromeHelper(object):
     _site_profile_lock = None  # 当前持有的站点Profile锁
     _uses_site_profile = False  # 是否使用站点Profile
     _authenticated_domain = None  # 已成功认证的域名（preserve_data模式下）
+    _MAX_VISIT_TIMEOUT = 120  # 访问URL超时时间
 
     def __init__(self, headless=False):
 
@@ -512,6 +513,13 @@ class ChromeHelper(object):
     @staticmethod
     async def check_document_ready(tab:Tab):
         while await tab.evaluate('document.readyState') == 'loading':
+            try:
+                title = (tab.target.title or '').lower()
+                if any(title == t.lower() for t in CloudflareHelper.CHALLENGE_TITLES):
+                    log.debug(f"CF challenge detected (title='{title}'), skipping document ready wait")
+                    return True
+            except Exception:
+                pass
             await asyncio.sleep(1)
         return True
     
@@ -688,10 +696,11 @@ class ChromeHelper(object):
     async def element_to_be_clickable(self, selector, timeout=10):
         end_time = time.monotonic() + timeout
         while time.monotonic() < end_time:
+            remaining = max(0.5, end_time - time.monotonic())
+            find_timeout = min(2, remaining)
             try:
-                element = await self._tab.find(text=selector, timeout=timeout)
+                element = await self._tab.find(text=selector, timeout=find_timeout)
                 is_clickable = await self.is_clickable(element)
-                # is_enabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === false')
                 if is_clickable:
                     return element
             except ProtocolException:
@@ -704,13 +713,14 @@ class ChromeHelper(object):
     async def element_not_to_be_clickable(self, selector, timeout=10):
         end_time = time.monotonic() + timeout
         while time.monotonic() < end_time:
+            remaining = max(0.5, end_time - time.monotonic())
+            find_timeout = min(2, remaining)
             try:
-                element = await self._tab.find(text=selector, timeout=timeout)
+                element = await self._tab.find(text=selector, timeout=find_timeout)
                 is_clickable = await self.is_clickable(element)
-                # is_disabled = await self._tab.evaluate(f'document.querySelector(\'{self.xpath_to_css(selector)}\').disabled === true')
                 if not is_clickable:
                     return True
-            except asyncio.TimeoutError:
+            except (ProtocolException, asyncio.TimeoutError):
                 return True
             await asyncio.sleep(0.2)
         return False
@@ -926,26 +936,28 @@ class ChromeHelper(object):
         if self._headless:
             options.headless = True
         options.lang="zh-CN"
-        chrome = await RetryBrowser.create(config=options, user_data_dir=user_data_dir, max_retries=5, retry_interval=2)
+        if user_data_dir:
+            options.user_data_dir = user_data_dir
+        chrome = await RetryBrowser.create(config=options, max_retries=5, retry_interval=2)
         return chrome
 
     async def _open_page(self, url, timeout, new_tab=False):
         """打开页面并等待加载完成"""
-        self._tab = await self._chrome.get(url, new_tab=new_tab)
-        await self._tab
+        self._tab = await asyncio.wait_for(self._chrome.get(url, new_tab=new_tab), timeout)
+        await asyncio.wait_for(self._tab, timeout)
         await self._tab.wait_for(text="html", timeout=timeout)
         await asyncio.wait_for(self.check_document_ready(self._tab), timeout)
     
     async def _navigate(self, url, timeout):
         """在当前标签页导航到新URL"""
-        await self._tab.get(url)
-        await self._tab
+        await asyncio.wait_for(self._tab.get(url), timeout)
+        await asyncio.wait_for(self._tab, timeout)
         await self._tab.wait_for(text="html", timeout=timeout)
         await asyncio.wait_for(self.check_document_ready(self._tab), timeout)
     
     async def _reload_page(self, timeout):
         """刷新当前页面"""
-        await self._tab.reload()
+        await asyncio.wait_for(self._tab.reload(), timeout)
         await self._tab.wait_for(text="html", timeout=timeout)
         await asyncio.wait_for(self.check_document_ready(self._tab), timeout)
 
@@ -963,6 +975,17 @@ class ChromeHelper(object):
         :param site_domain: 站点域名，用于获取站点专用Profile和锁定
         :param preserve_data: 如果为True，优先使用浏览器已有的cookie/localStorage，只在需要时才注入新数据
         """
+        try:
+            return await asyncio.wait_for(
+                self._visit_impl(url, ua, cookie, local_storage, timeout, proxy, new_tab, site_domain, preserve_data),
+                timeout=self._MAX_VISIT_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            log.error(f"visit() 总超时({self._MAX_VISIT_TIMEOUT}s)，强制返回: {url}")
+            return False
+
+    async def _visit_impl(self, url, ua=None, cookie=None, local_storage=None, timeout=30, proxy=None, new_tab=False, 
+                    site_domain=None, preserve_data=False):
         # 验证URL有效性
         parsed_url = urlparse(str(url))
         if parsed_url.scheme not in ('http', 'https'):
@@ -979,7 +1002,7 @@ class ChromeHelper(object):
         # 如果指定了站点域名，尝试获取站点Profile锁并使用站点专用Profile
         user_data_dir = None
         if site_domain:
-            if not self.acquire_site_profile_lock(site_domain, timeout=60):
+            if not self.acquire_site_profile_lock(site_domain, timeout=3):
                 log.warn(f"无法获取站点 {site_domain} 的Profile锁，将使用临时Profile")
             else:
                 user_data_dir = ChromeHelper.get_site_profile_dir(site_domain)
@@ -1008,7 +1031,7 @@ class ChromeHelper(object):
                     await self._navigate(url, timeout)
                     return True
                 
-                should_inject_cookie = True
+                should_inject_data = True
                 
                 # preserve_data模式：先尝试使用已保存的浏览器数据
                 if preserve_data and self._uses_site_profile:
@@ -1016,31 +1039,32 @@ class ChromeHelper(object):
                     from app.helper import SiteHelper
                     if await SiteHelper.wait_for_logged_in(self._tab, timeout=5):
                         log.debug(f"使用已保存的浏览器数据成功登录站点")
-                        should_inject_cookie = False
+                        should_inject_data = False
                         self._authenticated_domain = current_domain
                         if site_domain:
                             ChromeHelper.update_site_profile_access_time(site_domain)
                 
-                # 注入cookie
-                if should_inject_cookie and cookie:
-                    cookies = self.string_to_cookie_params(cookie, url)
-                    if cookies:
-                        await self._chrome.cookies.clear()
-                        await self._chrome.connection.send(nd.cdp.storage.set_cookies(cookies))
+                if should_inject_data:
+                    # 注入cookie
+                    if cookie:
+                        cookies = self.string_to_cookie_params(cookie, url)
+                        if cookies:
+                            # await self._chrome.cookies.clear()
+                            await self._chrome.connection.send(nd.cdp.storage.set_cookies(cookies))
+                        
+                        if self._tab:
+                            await self._navigate(url, timeout)
+                        else:
+                            await self._open_page(url, timeout, new_tab)
+                        self._authenticated_domain = current_domain
                     
-                    if self._tab:
-                        await self._reload_page(timeout)
-                    else:
-                        await self._open_page(url, timeout, new_tab)
-                    self._authenticated_domain = current_domain
-                
-                # 处理localStorage
-                if local_storage:
-                    if not self._tab:
-                        await self._open_page(url, timeout, new_tab)
-                    await self.set_local_storage(local_storage)
-                    await self._navigate(url, timeout)
-                    self._authenticated_domain = current_domain
+                    # 处理localStorage
+                    if local_storage:
+                        if not self._tab:
+                            await self._open_page(url, timeout, new_tab)
+                        await self.set_local_storage(local_storage)
+                        await self._navigate(url, timeout)
+                        self._authenticated_domain = current_domain
                 
                 # 兜底：确保页面已打开
                 if not self._tab:
@@ -1086,16 +1110,13 @@ class ChromeHelper(object):
             if cookie:
                 cookies = self.string_to_cookie_params(cookie, url)
                 if cookies:
-                    await self._chrome.cookies.clear()
                     await self._chrome.connection.send(nd.cdp.storage.set_cookies(cookies))
 
             if local_storage:
                 await self.set_local_storage(local_storage)
 
             if reload and self._tab:
-                await self._tab.reload()
-                await self._tab.wait_for(text="html", timeout=30)
-                await asyncio.wait_for(self.check_document_ready(self._tab), timeout=30)
+                await self._navigate(url, timeout=30)
 
             return True
         except Exception as e:
@@ -1213,7 +1234,6 @@ class ChromeHelper(object):
                 for key in local_storage:
                     escaped_value = json.dumps(local_storage[key])
                     await self._tab.evaluate(f'localStorage.setItem("{key}", {escaped_value});')
-                # await self._tab.set_local_storage(local_storage)
                 break
             except Exception as err:
                 if i == 2:
@@ -1243,36 +1263,132 @@ class ChromeHelper(object):
             log.error(str(err))
             return None
 
+    def _disable_target_discovery(self):
+        """
+        关闭前禁用 target 自动发现。
+        清除 nodriver connection 上的事件处理器，防止浏览器关闭时
+        TargetDestroyed 等事件触发后台 update_targets() 任务，
+        从而避免 ConnectionRefusedError 异常。
+        """
+        try:
+            if self._chrome and hasattr(self._chrome, 'connection') and self._chrome.connection:
+                handlers = getattr(self._chrome.connection, 'handlers', None)
+                if handlers:
+                    for event_type in [
+                        nd.cdp.target.TargetInfoChanged,
+                        nd.cdp.target.TargetCreated,
+                        nd.cdp.target.TargetDestroyed,
+                        nd.cdp.target.TargetCrashed,
+                    ]:
+                        handlers.pop(event_type, None)
+        except Exception as e:
+            log.debug(f"Failed to disable target discovery: {e}")
+
     async def quit(self, preserve_profile=None):
         """
         退出浏览器
         :param preserve_profile: 是否保留Profile目录。如果为None，则自动判断：
                                  使用站点Profile时保留，使用临时Profile时删除
         """
-        # 如果没有明确指定，根据是否使用站点Profile来决定
         if preserve_profile is None:
             preserve_profile = self._uses_site_profile
-            
-        if self._chrome:
-            try:
-                self._chrome.stop()
-                # Wait for the browser process to be terminated
-                end_time = time.monotonic() + 10
-                while time.monotonic() < end_time:
-                    if not self._chrome._process:
-                        break
-                    await asyncio.sleep(0.2)
-            except Exception as e:
-                log.error(f"Error during browser closure: {e}")
-            finally:
-                # Ensure the browser process is terminated
-                self._cleanup_processes(preserve_profile=preserve_profile)
-                self._tab = None
-                self._chrome = None
-                self._authenticated_domain = None
 
-        # 释放站点Profile锁
-        self.release_site_profile_lock()
+        try:
+            if self._chrome:
+                try:
+                    # 关闭前禁用 target 自动发现，防止浏览器关闭时
+                    # TargetDestroyed 事件触发 update_targets() 导致 ConnectionRefusedError
+                    self._disable_target_discovery()
+
+                    if preserve_profile:
+                        try:
+                            await asyncio.wait_for(self._persist_session_cookies(), timeout=10)
+                        except (asyncio.TimeoutError, Exception) as e:
+                            log.debug(f"持久化cookie超时或失败: {e}")
+                        await self._graceful_close(timeout=10)
+                    else:
+                        self._chrome.stop()
+                        end_time = time.monotonic() + 10
+                        while time.monotonic() < end_time:
+                            if not self._chrome._process:
+                                break
+                            await asyncio.sleep(0.2)
+                except Exception as e:
+                    log.error(f"Error during browser closure: {e}")
+                finally:
+                    self._cleanup_processes(preserve_profile=preserve_profile)
+                    self._tab = None
+                    self._chrome = None
+                    self._authenticated_domain = None
+        finally:
+            self.release_site_profile_lock()
+
+    async def _persist_session_cookies(self):
+        """
+        将session cookie转为持久化cookie，使Chrome在关闭时将其写入SQLite数据库。
+        """
+        if not self._chrome:
+            return
+        try:
+            cookies = await self.get_cookies(str_format=False)
+            if not cookies:
+                return
+            session_cookies = [c for c in cookies if c.get("session", False) or c.get("expires", 0) <= 0]
+            if not session_cookies:
+                return
+            expires = time.time() + 86400 * 30
+            cookie_params = []
+            for c in session_cookies:
+                param = nd.cdp.network.CookieParam(
+                    name=c["name"],
+                    value=c["value"],
+                    domain=c.get("domain", ""),
+                    path=c.get("path", "/"),
+                    expires=nd.cdp.network.TimeSinceEpoch(expires),
+                )
+                if c.get("secure"):
+                    param.secure = True
+                if c.get("httpOnly"):
+                    param.http_only = True
+                if c.get("sameSite"):
+                    try:
+                        param.same_site = nd.cdp.network.CookieSameSite(c["sameSite"])
+                    except Exception:
+                        pass
+                cookie_params.append(param)
+            if cookie_params:
+                await self._chrome.connection.send(nd.cdp.storage.set_cookies(cookie_params))
+                log.debug(f"已将 {len(cookie_params)} 个session cookie转为持久化")
+        except Exception as e:
+            log.debug(f"持久化session cookie失败: {e}")
+
+    async def _graceful_close(self, timeout=10):
+        """
+        通过CDP Browser.close命令优雅关闭浏览器，
+        让Chrome有机会将localStorage等数据刷入磁盘。
+        """
+        try:
+            conn = getattr(self._chrome, 'connection', None)
+            if conn and not conn.closed:
+                await asyncio.wait_for(
+                    conn.send(nd.cdp.browser.close()),
+                    timeout=5
+                )
+            else:
+                # 连接已断开，直接终止进程
+                self._chrome.stop()
+                return
+        except (asyncio.TimeoutError, Exception):
+            pass
+
+        end_time = time.monotonic() + timeout
+        while time.monotonic() < end_time:
+            proc = getattr(self._chrome, '_process', None)
+            if not proc or proc.returncode is not None:
+                return
+            await asyncio.sleep(0.3)
+
+        self._chrome.stop()
 
     def _cleanup_processes(self, preserve_profile=False):
         """
@@ -1371,16 +1487,60 @@ class ChromeHelper(object):
     @staticmethod
     def prune_chrome_leftovers(max_age_minutes: int = 120) -> dict:
         """
-        Safely prune only stopped or orphaned Nodriver instances and uc_* temp profiles,
-        without touching any currently running Chrome/Chromium processes.
+        清理僵尸Chrome/Chromium进程和残留临时目录。
 
-        - Never kills processes.
-        - Never removes user_data_dir that is currently in use by any running process.
-        - Only removes temp profiles (uses_custom_data_dir == False) older than max_age_minutes.
+        1. 终止运行时间超过 max_age_minutes 的 chrome/chromium 主进程及其子进程树
+        2. 清理 nodriver 注册表中已停止的实例
+        3. 清理孤立的 uc_* 临时目录
 
-        Returns summary dict with deleted_dirs, pruned_instances, in_use.
+        站点Profile目录不会被删除（仅删除临时 uc_* 目录）。
+
+        Returns summary dict with killed_pids, deleted_dirs, pruned_instances.
         """
-        # Collect in-use user-data-dirs from all running chrome/chromium processes
+        killed_pids = []
+        deleted_dirs = []
+        pruned_instances = 0
+        age_threshold = max_age_minutes * 60
+
+        # Phase 1: 终止运行过久的僵尸 chromium 主进程
+        # 只处理主进程（有 --user-data-dir 参数的），子进程会随主进程一起被终止
+        for proc in psutil.process_iter(attrs=['pid', 'name', 'create_time', 'cmdline']):
+            try:
+                name = (proc.info.get('name') or '').lower()
+                if 'chrome' not in name and 'chromium' not in name:
+                    continue
+                cmdline = proc.info.get('cmdline') or []
+                has_user_data_dir = any(
+                    isinstance(arg, str) and arg.startswith('--user-data-dir=')
+                    for arg in cmdline
+                )
+                if not has_user_data_dir:
+                    continue
+                create_time = proc.info.get('create_time', 0)
+                if create_time and (time.time() - create_time) > age_threshold:
+                    pid = proc.info['pid']
+                    try:
+                        parent = psutil.Process(pid)
+                        children = parent.children(recursive=True)
+                        for p in children + [parent]:
+                            try:
+                                p.terminate()
+                            except psutil.NoSuchProcess:
+                                pass
+                        _, alive = psutil.wait_procs(children + [parent], timeout=5)
+                        for p in alive:
+                            try:
+                                p.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                        killed_pids.append(pid)
+                        log.debug(f"已终止僵尸浏览器进程 PID={pid}（运行 {int((time.time() - create_time) / 60)} 分钟）")
+                    except psutil.NoSuchProcess:
+                        pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        # Phase 2: 清理 nodriver 注册表中已停止的实例
         in_use_dirs = set()
         for proc in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
             try:
@@ -1392,10 +1552,6 @@ class ChromeHelper(object):
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
 
-        deleted_dirs = []
-        pruned_instances = 0
-
-        # Prune only stopped instances from Nodriver registry
         try:
             reg = nd.util.get_registered_instances()
             for inst in list(reg):
@@ -1405,16 +1561,14 @@ class ChromeHelper(object):
                     alive = bool(pid) and psutil.pid_exists(pid)
                 except Exception:
                     pass
-                
                 if not alive:
-                    # Remove temp profile if not custom and not in use
                     try:
                         cfg = getattr(inst, 'config', None)
                         data_dir = getattr(cfg, 'user_data_dir', None)
                         uses_custom = getattr(cfg, 'uses_custom_data_dir', True)
                         if data_dir and not uses_custom:
                             norm = os.path.normpath(data_dir)
-                            if norm not in in_use_dirs and ChromeHelper._dir_older_than(norm, max_age_minutes):
+                            if norm not in in_use_dirs:
                                 shutil.rmtree(norm, ignore_errors=True)
                                 deleted_dirs.append(norm)
                     except Exception:
@@ -1427,11 +1581,11 @@ class ChromeHelper(object):
         except Exception as e:
             log.error(f"Failed to clean nodriver registry: {e}")
 
-        # Prune orphan uc_* temp dirs in system temp that are not in use
+        # Phase 3: 清理孤立的 uc_* 临时目录
         try:
-            for name in os.listdir(tempfile.gettempdir()):
-                if name.startswith('uc_'):
-                    path = os.path.join(tempfile.gettempdir(), name)
+            for entry_name in os.listdir(tempfile.gettempdir()):
+                if entry_name.startswith('uc_'):
+                    path = os.path.join(tempfile.gettempdir(), entry_name)
                     if os.path.isdir(path):
                         norm = os.path.normpath(path)
                         if norm not in in_use_dirs and ChromeHelper._dir_older_than(norm, max_age_minutes):
@@ -1443,19 +1597,19 @@ class ChromeHelper(object):
         except Exception as e:
             log.error(f"Failed to scan system temp directory: {e}")
 
-        if deleted_dirs or pruned_instances:
-            log.debug(f"Chrome cleanup completed: deleted {len(deleted_dirs)} dirs, pruned {pruned_instances} instances")
-        
-        return {'deleted_dirs': deleted_dirs, 'pruned_instances': pruned_instances, 'in_use': list(in_use_dirs)}
+        if killed_pids or deleted_dirs or pruned_instances:
+            log.info(f"Chrome清理完成：终止 {len(killed_pids)} 个僵尸进程，删除 {len(deleted_dirs)} 个临时目录，清理 {pruned_instances} 个注册表条目")
+
+        return {'killed_pids': killed_pids, 'deleted_dirs': deleted_dirs, 'pruned_instances': pruned_instances}
 
     @staticmethod
     def _dir_older_than(path: str, max_age_minutes: int) -> bool:
         """
-        检查目录是否超过指定年龄
+        检查目录是否超过指定保留时间
         
         :param path: 目录路径
-        :param max_age_minutes: 最大年龄（分钟）
-        :return: True 如果目录存在且超过指定年龄
+        :param max_age_minutes: 最大保留时间（分钟）
+        :return: True 如果目录存在且超过指定保留时间
         """
         if not os.path.exists(path):
             return False
@@ -1593,15 +1747,40 @@ class RetryBrowser(Browser):
                 )
             )
             try:
-                # serialize critical section of spawn and port selection across threads/loops
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, _SPAWN_THREAD_LOCK.acquire)
+                lock_acquired = threading.Event()
+
+                def _acquire_spawn_lock():
+                    result = _SPAWN_THREAD_LOCK.acquire(timeout=120)
+                    if result:
+                        lock_acquired.set()
+                    return result
+
                 try:
-                    await cls._start_with_long_wait(instance)
-                finally:
-                    _SPAWN_THREAD_LOCK.release()
+                    acquired = await loop.run_in_executor(None, _acquire_spawn_lock)
+                    if not acquired:
+                        raise Exception("Browser spawn lock acquisition timed out (120s)")
+                    try:
+                        await cls._start_with_long_wait(instance)
+                    finally:
+                        lock_acquired.clear()
+                        _SPAWN_THREAD_LOCK.release()
+                except BaseException:
+                    if not lock_acquired.is_set():
+                        lock_acquired.wait(timeout=1)
+                    if lock_acquired.is_set():
+                        lock_acquired.clear()
+                        try:
+                            _SPAWN_THREAD_LOCK.release()
+                        except RuntimeError:
+                            pass
+                    raise
+
                 log.debug(f"RetryBrowser create instance._process_pid: {instance._process_pid}")
                 return instance
+            except asyncio.CancelledError:
+                RetryBrowser._sync_cleanup_instance(instance)
+                raise
             except Exception as e:
                 retries += 1
                 log.debug(f"Failed to start browser, attempt {retries}/{max_retries}: {e}")
@@ -1615,6 +1794,43 @@ class RetryBrowser(Browser):
                     pass
                 await asyncio.sleep(retry_interval)
         raise Exception(f"Failed to create browser after {max_retries} attempts")
+
+    @staticmethod
+    def _sync_cleanup_instance(instance):
+        """
+        Synchronous cleanup of a browser instance.
+        Safe to call during CancelledError handling (no await points).
+        """
+        pid = getattr(instance, '_process_pid', None)
+        if pid and psutil.pid_exists(pid):
+            try:
+                parent = psutil.Process(pid)
+                children = parent.children(recursive=True)
+                for p in children + [parent]:
+                    try:
+                        p.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                _, alive = psutil.wait_procs(children + [parent], timeout=5)
+                for p in alive:
+                    try:
+                        p.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+            except psutil.NoSuchProcess:
+                pass
+        try:
+            cfg = getattr(instance, 'config', None)
+            uses_custom = getattr(cfg, 'uses_custom_data_dir', True)
+            data_dir = getattr(cfg, 'user_data_dir', None)
+            if data_dir and not uses_custom:
+                shutil.rmtree(data_dir, ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            nd.util.get_registered_instances().discard(instance)
+        except Exception:
+            pass
     
     @staticmethod
     async def _cleanup_process(instance: "RetryBrowser"):

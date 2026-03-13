@@ -61,7 +61,10 @@ class DbHelper:
                     OTHERINFO=media_item.resource_team,
                     UPLOAD_VOLUME_FACTOR=media_item.upload_volume_factor,
                     DOWNLOAD_VOLUME_FACTOR=media_item.download_volume_factor,
-                    NOTE=media_item.labels
+                    NOTE=media_item.labels,
+                    HR=1 if media_item.hit_and_run else 0,
+                    HR_DAYS=getattr(media_item, 'hr_days', None),
+                    FREE_DEADLINE=getattr(media_item, 'free_deadline', None)
                 ))
         self._db.insert(data_list)
 

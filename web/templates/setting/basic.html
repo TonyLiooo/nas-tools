@@ -59,6 +59,15 @@
                   </select>
                 </div>
               </div>
+              <div class="col-lg">
+                <div class="mb-3">
+                  <label class="form-label required">Redis服务端口 <span class="form-help"
+                                                               title="用于Redis服务端口，端口冲突时会自动切换到空闲端口"
+                                                               data-bs-toggle="tooltip">?</span></label>
+                  <input type="text" value="{{ Config.app.redis_port or '6379' }}" class="form-control" id="app.redis_port"
+                         placeholder="6379" autocomplete="off">
+                </div>
+              </div>
             </div>
             <div class="row">
               <div class="col-lg">

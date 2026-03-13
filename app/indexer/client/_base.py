@@ -184,6 +184,9 @@ class _IIndexClient(metaclass=ABCMeta):
                     'downloadvolumefactor') is not None else 1.0
                 imdbid = item.get("imdbid")
                 labels = item.get("labels")
+                hr = bool(item.get("hr"))
+                hr_days = item.get("hr_days")
+                free_deadline = item.get("free_deadline")
                 # 全匹配模式下，非公开站点，过滤掉做种数为0的
                 if filter_args.get("seeders") and not indexer.public and str(seeders) == "0":
                     log.info(f"【{self.client_name}】{torrent_name} 做种数为0")
@@ -297,7 +300,10 @@ class _IIndexClient(metaclass=ABCMeta):
                                            imdbid=imdbid,
                                            upload_volume_factor=uploadvolumefactor,
                                            download_volume_factor=downloadvolumefactor,
-                                           labels=labels)
+                                           labels=labels,
+                                           hit_and_run=hr,
+                                           hr_days=hr_days,
+                                           free_deadline=free_deadline)
 
                 # 先过滤掉可以明确的类型
                 if meta_info.type == MediaType.TV and filter_args.get("type") == MediaType.MOVIE:
@@ -378,7 +384,10 @@ class _IIndexClient(metaclass=ABCMeta):
                                             description=description,
                                             page_url=page_url,
                                             upload_volume_factor=uploadvolumefactor,
-                                            download_volume_factor=downloadvolumefactor)
+                                            download_volume_factor=downloadvolumefactor,
+                                            hit_and_run=hr,
+                                            hr_days=hr_days,
+                                            free_deadline=free_deadline)
                 if media_info not in ret_array:
                     index_sucess += 1
                     matched_torrent.append(torrent_name)
@@ -457,6 +466,9 @@ class _IIndexClient(metaclass=ABCMeta):
                     'downloadvolumefactor') is not None else 1.0
                 imdbid = item.get("imdbid")
                 labels = item.get("labels")
+                hr = bool(item.get("hr"))
+                hr_days = item.get("hr_days")
+                free_deadline = item.get("free_deadline")
                 # 全匹配模式下，非公开站点，过滤掉做种数为0的
                 if filter_args.get("seeders") and not indexer.public and str(seeders) == "0":
                     log.info(f"【{self.client_name}】{torrent_name} 做种数为0")
@@ -555,7 +567,10 @@ class _IIndexClient(metaclass=ABCMeta):
                                            imdbid=imdbid,
                                            upload_volume_factor=uploadvolumefactor,
                                            download_volume_factor=downloadvolumefactor,
-                                           labels=labels)
+                                           labels=labels,
+                                           hit_and_run=hr,
+                                           hr_days=hr_days,
+                                           free_deadline=free_deadline)
 
                 # 先过滤掉可以明确的类型
                 if meta_info.type == MediaType.TV and filter_args.get("type") == MediaType.MOVIE:
@@ -636,7 +651,10 @@ class _IIndexClient(metaclass=ABCMeta):
                                             description=description,
                                             page_url=page_url,
                                             upload_volume_factor=uploadvolumefactor,
-                                            download_volume_factor=downloadvolumefactor)
+                                            download_volume_factor=downloadvolumefactor,
+                                            hit_and_run=hr,
+                                            hr_days=hr_days,
+                                            free_deadline=free_deadline)
                 if media_info not in ret_array:
                     index_sucess += 1
                     matched_torrent.append(torrent_name)
@@ -717,6 +735,9 @@ class _IIndexClient(metaclass=ABCMeta):
                     'downloadvolumefactor') is not None else 1.0
                 imdbid = item.get("imdbid")
                 labels = item.get("labels")
+                hr = bool(item.get("hr"))
+                hr_days = item.get("hr_days")
+                free_deadline = item.get("free_deadline")
                 # 全匹配模式下，非公开站点，过滤掉做种数为0的
                 if filter_args.get("seeders") and not indexer.public and str(seeders) == "0":
                     log.info(f"【{self.client_name}】{torrent_name} 做种数为0")
@@ -759,7 +780,10 @@ class _IIndexClient(metaclass=ABCMeta):
                                            imdbid=imdbid,
                                            upload_volume_factor=uploadvolumefactor,
                                            download_volume_factor=downloadvolumefactor,
-                                           labels=labels)
+                                           labels=labels,
+                                           hit_and_run=hr,
+                                           hr_days=hr_days,
+                                           free_deadline=free_deadline)
 
                 # 先过滤掉可以明确的类型
                 if meta_info.type == MediaType.TV and filter_args.get("type") == MediaType.MOVIE:
@@ -873,7 +897,10 @@ class _IIndexClient(metaclass=ABCMeta):
                                             description=description,
                                             page_url=page_url,
                                             upload_volume_factor=uploadvolumefactor,
-                                            download_volume_factor=downloadvolumefactor)
+                                            download_volume_factor=downloadvolumefactor,
+                                            hit_and_run=hr,
+                                            hr_days=hr_days,
+                                            free_deadline=free_deadline)
                 if media_info not in ret_array:
                     index_sucess += 1
                     ret_array.append(media_info)

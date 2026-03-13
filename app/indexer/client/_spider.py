@@ -26,7 +26,7 @@ class TorrentSpider(feapder.AirSpider):
         RETRY_FAILED_REQUESTS=False,
         LOG_LEVEL="ERROR",
         RANDOM_HEADERS=False,
-        REDISDB_IP_PORTS="127.0.0.1:6379",
+        REDISDB_IP_PORTS="127.0.0.1:%s" % RedisHelper.get_port(),
         REDISDB_USER_PASS="",
         REDISDB_DB=0,
         RESPONSE_CACHED_ENABLE=_redis_valid,
@@ -136,6 +136,7 @@ class TorrentSpider(feapder.AirSpider):
         """
         开始请求
         """
+        self.__class__.__custom_setting__["REDISDB_IP_PORTS"] = "127.0.0.1:%s" % RedisHelper.get_port()
 
         if not self.search_config or not self.domain:
             self.is_complete = True
@@ -499,6 +500,75 @@ class TorrentSpider(feapder.AirSpider):
         self.torrents_info['date_elapsed'] = self.__filter_text(self.torrents_info.get('date_elapsed'),
                                                                 selector.get('filters'))
 
+    def Getfree_deadline(self, torrent):
+        # free_deadline
+        if 'free_deadline' not in self.fields:
+            return
+        selector = self.fields.get('free_deadline', {})
+        if not selector:
+            return
+        free_deadline_node = torrent(selector.get('selector', '')).clone()
+        self.__remove(free_deadline_node, selector)
+        items = self.__attribute_or_text(free_deadline_node, selector)
+        value = self.__index(items, selector)
+        value = self.__filter_text(value, selector.get('filters'))
+        if value:
+            self.torrents_info['free_deadline'] = value
+
+    def Gethr(self, torrent):
+        """
+        解析 HR 信息：
+        1）优先使用 hr_days 字段，解析出 HR 天数；
+        2）如果没有 hr_days，则根据 minimumratio / minimumseedtime 是否命中 HR 元素判断是否为 HR。
+        """
+        hr_flag = False
+        hr_days = None
+
+        # 1) 通过 hr_days 获取 HR 天数
+        if 'hr_days' in self.fields:
+            selector = self.fields.get('hr_days', {})
+            if selector:
+                hr_nodes = torrent(selector.get('selector', '')).clone()
+                if hr_nodes:
+                    self.__remove(hr_nodes, selector)
+                    items = self.__attribute_or_text(hr_nodes, selector)
+                    value = self.__index(items, selector)
+                    value = self.__filter_text(value, selector.get('filters'))
+                    if value:
+                        try:
+                            hr_days_int = int(value)
+                        except Exception:
+                            hr_days_int = 0
+                        if hr_days_int > 0:
+                            hr_days = hr_days_int
+                            hr_flag = True
+                        else:
+                            hr_flag = True
+
+        # 2) 如果没有 hr_days 配置或未命中，通过 minimumratio / minimumseedtime 判断 HR
+        if not hr_flag:
+            for field_name in ('minimumratio', 'minimumseedtime'):
+                if field_name not in self.fields:
+                    continue
+                selector = self.fields.get(field_name, {})
+                cases = selector.get('case') if selector else None
+                if not cases:
+                    continue
+                for case_selector, case_value in cases.items():
+                    if case_selector == "*":
+                        continue
+                    nodes = torrent(case_selector)
+                    if nodes and case_value:
+                        hr_flag = True
+                        break
+                if hr_flag:
+                    break
+
+        if hr_flag:
+            self.torrents_info['hr'] = True
+            if hr_days is not None:
+                self.torrents_info['hr_days'] = hr_days
+
     def Getdownloadvolumefactor(self, torrent):
         # downloadvolumefactor
         selector = self.fields.get('downloadvolumefactor', {})
@@ -573,6 +643,8 @@ class TorrentSpider(feapder.AirSpider):
             self.Getimdbid(torrent)
             self.Getdownloadvolumefactor(torrent)
             self.Getuploadvolumefactor(torrent)
+            self.Getfree_deadline(torrent)
+            self.Gethr(torrent)
             self.Getpubdate(torrent)
             self.Getelapsed_date(torrent)
             self.Getlabels(torrent)
@@ -588,8 +660,6 @@ class TorrentSpider(feapder.AirSpider):
         """
         if not text or not filters or not isinstance(filters, list):
             return text
-        if not isinstance(text, str):
-            text = str(text)
         for filter_item in filters:
             if not text:
                 break
@@ -610,6 +680,8 @@ class TorrentSpider(feapder.AirSpider):
                     text = f"{args}{text}"
             except Exception as err:
                 ExceptionUtils.exception_traceback(err)
+        if not isinstance(text, str):
+            text = str(text)
         return text.strip()
 
     @staticmethod
