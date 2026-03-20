@@ -396,6 +396,15 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             self.user_level = user_levels_text[0].strip()
             return
 
+        user_levels_text = html.xpath(
+            '//span[@class="font-bold m-auto" and contains(text(), "等级：")]/following-sibling::span//img[@title][1]/@title'
+        )
+        if user_levels_text:
+            if not StringUtils.is_string_and_not_empty(user_levels_text[0].strip()):
+                return
+            self.user_level = user_levels_text[0].strip()
+            return
+
         user_levels_text = html.xpath('//span[@class="font-bold m-auto" and contains(text(), "等级：")]/following-sibling::span/b')
         if user_levels_text:
             user_level_element = user_levels_text[0]
