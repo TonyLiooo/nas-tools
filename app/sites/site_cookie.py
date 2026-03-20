@@ -170,9 +170,20 @@ class SiteCookie(object):
                             await captcha_element.send_keys(captcha)
                         else:
                             pass
+                    await submit_obj.scroll_into_view()
                     await submit_obj.mouse_move()
                     await submit_obj.mouse_click()
-                    await chrome.element_not_to_be_clickable(submit_xpath, timeout=6)
+                    submit_reacted = False
+                    try:
+                        submit_reacted = await chrome.element_not_to_be_clickable(submit_xpath, timeout=5)
+                    except Exception:
+                        submit_reacted = False
+                    if not submit_reacted:
+                        await submit_obj.click()
+                    try:
+                        await chrome.element_not_to_be_clickable(submit_xpath, timeout=5)
+                    except Exception:
+                        pass
                     await chrome._tab
                     try:
                         await asyncio.wait_for(chrome.check_document_ready(chrome._tab), 20)
@@ -219,6 +230,7 @@ class SiteCookie(object):
                         await asyncio.sleep(1)
                         email_send_obj = await chrome.element_to_be_clickable(email_send_xpath, timeout=10)
                         if email_send_obj:
+                            await email_send_obj.scroll_into_view()
                             await email_send_obj.mouse_move()
                             await email_send_obj.mouse_click()
                         await asyncio.sleep(1)
@@ -243,6 +255,7 @@ class SiteCookie(object):
 
                         login_submit_obj = await chrome.element_to_be_clickable(login_submit_xpath, timeout=10)
                         if login_submit_obj:
+                            await login_submit_obj.scroll_into_view()
                             await login_submit_obj.mouse_move()
                             await login_submit_obj.mouse_click()
                             await chrome.element_not_to_be_clickable(login_submit_xpath, timeout=20)

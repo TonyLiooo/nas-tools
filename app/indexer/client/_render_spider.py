@@ -81,6 +81,7 @@ class RenderSpider(object):
                 if submit_obj:
                     search_input_element = await chrome._tab.find(search_input)
                     await search_input_element.send_keys(keyword)
+                    await submit_obj.scroll_into_view()
                     await submit_obj.mouse_move()
                     await submit_obj.mouse_click()
                 else:

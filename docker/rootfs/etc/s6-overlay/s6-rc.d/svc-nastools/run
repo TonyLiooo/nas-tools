@@ -11,6 +11,42 @@ else
     NT_PORT=3000
 fi
 
+# Reuse an already running display if one exists.
+if [ -n "${DISPLAY}" ]; then
+    export NASTOOL_DISPLAY=1
+elif pgrep -x Xvfb >/dev/null 2>&1; then
+    XVFB_DISPLAY=$(python3 - <<'PY'
+import os
+import re
+import subprocess
+
+display = ""
+try:
+    result = subprocess.run(["pgrep", "-a", "Xvfb"], capture_output=True, text=True, timeout=5)
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            match = re.search(r":\d+(?:\.\d+)?", line)
+            if match:
+                display = match.group(0).split(".")[0]
+                break
+except Exception:
+    pass
+
+if not display and os.path.isdir("/tmp/.X11-unix"):
+    for entry in sorted(os.listdir("/tmp/.X11-unix")):
+        if entry.startswith("X") and entry[1:].isdigit():
+            display = f":{entry[1:]}"
+            break
+
+print(display)
+PY
+)
+    if [ -n "${XVFB_DISPLAY}" ]; then
+        export DISPLAY="${XVFB_DISPLAY}"
+        export NASTOOL_DISPLAY=1
+    fi
+fi
+
 exec \
     s6-notifyoncheck -d -n 300 -w 1000 -c "nc -z localhost ${NT_PORT}" \
     cd ${WORKDIR} s6-setuidgid nt python3 run.py

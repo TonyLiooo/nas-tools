@@ -638,12 +638,54 @@ function logout() {
 
 //返回到登录页
 function back_to_login_page(type) {
-  timeout = (type === "restart") ? 6000 : 6000;
-  setTimeout(logout, timeout);
-  setTimeout(function() {
-    hide_wait_modal();
-    window.location.href = "/";
-  }, timeout);
+  const pollInterval = 2000;
+  const requestTimeout = 1500;
+  const maxWait = (type === "update_system") ? 180000 : 60000;
+  const startTime = Date.now();
+  let sawDown = false;
+
+  function probeServer() {
+    const controller = new AbortController();
+    const timer = setTimeout(function () {
+      controller.abort();
+    }, requestTimeout);
+
+    fetch("/?_restart_check=" + Date.now(), {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal
+    }).then(function (response) {
+      clearTimeout(timer);
+      if (response.ok) {
+        if (sawDown) {
+          hide_wait_modal();
+          window.location.href = "/";
+          return;
+        }
+      } else {
+        sawDown = true;
+      }
+
+      if (Date.now() - startTime >= maxWait) {
+        hide_wait_modal();
+        show_fail_modal("未检测到服务完成重启，请稍后手动刷新页面或检查日志。");
+        return;
+      }
+      setTimeout(probeServer, pollInterval);
+    }).catch(function () {
+      clearTimeout(timer);
+      sawDown = true;
+      if (Date.now() - startTime >= maxWait) {
+        hide_wait_modal();
+        show_fail_modal("未检测到服务完成重启，请稍后手动刷新页面或检查日志。");
+        return;
+      }
+      setTimeout(probeServer, pollInterval);
+    });
+  }
+
+  setTimeout(probeServer, 1500);
 }
 
 //重启

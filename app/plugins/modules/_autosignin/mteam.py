@@ -29,7 +29,7 @@ class MTeam(_ISiteSigninHandler):
             self.warn("%s 无法打开网站" % site)
             return f"【{site}】仿真签到失败，无法打开网站！", None
         # 检测是否过cf
-        if under_challenge(await chrome.get_html()):
+        if under_challenge(await chrome.get_html(), include_embedded=True):
             # 循环检测是否过cf
             cloudflare = await chrome.pass_cloudflare()
             if not cloudflare:
@@ -180,6 +180,7 @@ class MTeam(_ISiteSigninHandler):
                 password_element = await chrome._tab.find(password_xpath)
                 await password_element.send_keys(password)
                 # 提交登录
+                await submit_obj.scroll_into_view()
                 await submit_obj.mouse_move()
                 await submit_obj.mouse_click()
                 # 等待页面刷新完毕

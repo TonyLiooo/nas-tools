@@ -204,7 +204,7 @@ class SiteSignin(object):
             await checkin_obj.mouse_move()
             await checkin_obj.mouse_click()
             await asyncio.sleep(3)
-            if under_challenge(await chrome.get_html()):
+            if under_challenge(await chrome.get_html(), include_embedded=True):
                 cloudflare = await chrome.pass_cloudflare()
                 if not cloudflare:
                     log.info("【Sites】%s 仿真签到失败，无法通过Cloudflare" % site)

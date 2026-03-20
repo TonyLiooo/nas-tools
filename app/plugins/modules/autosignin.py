@@ -1333,7 +1333,7 @@ class AutoSignIn(_IPluginModule):
                             await asyncio.wait_for(ChromeHelper.check_document_ready(chrome._tab), 20)
                         except asyncio.TimeoutError:
                             self.debug("Timeout waiting for the page")
-                        if under_challenge(await chrome.get_html()):
+                        if under_challenge(await chrome.get_html(), include_embedded=True):
                             cloudflare = await chrome.pass_cloudflare()
                             if not cloudflare:
                                 self.info("%s 仿真签到失败，无法通过Cloudflare" % site)
@@ -1360,7 +1360,7 @@ class AutoSignIn(_IPluginModule):
                                 if found:
                                     self.debug(f"{site} 找到并点击了二次确认按钮: {selector}")
                                     # 等待页面响应
-                                    await asyncio.sleep(1)
+                                    await asyncio.sleep(3)
                                     try:
                                         await asyncio.wait_for(ChromeHelper.check_document_ready(chrome._tab), 20)
                                     except asyncio.TimeoutError:

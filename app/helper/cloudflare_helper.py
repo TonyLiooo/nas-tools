@@ -1,5 +1,6 @@
 import time
 import os
+import json
 
 from pyquery import PyQuery
 
@@ -59,8 +60,7 @@ async def resolve_challenge(tab: Tab, timeout=CF_TIMEOUT):
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         try:
-            await asyncio.wait_for(_evil_logic(tab), timeout=timeout)
-            return True
+            return bool(await asyncio.wait_for(_evil_logic(tab), timeout=timeout))
         except asyncio.TimeoutError:
             if attempt < max_retries:
                 await tab.reload()
@@ -76,10 +76,11 @@ async def resolve_challenge(tab: Tab, timeout=CF_TIMEOUT):
             return False
 
 
-def under_challenge(html_text: str):
+def under_challenge(html_text: str, include_embedded: bool = False):
     """
     Check if the page is under challenge
     :param html_text:
+    :param include_embedded: 是否将嵌入式验证码组件视为challenge
     :return:
     """
     if not html_text:
@@ -89,8 +90,9 @@ def under_challenge(html_text: str):
     for title in CHALLENGE_TITLES:
         if page_title.lower() == title.lower():
             return True
-    for selector in CHALLENGE_SELECTORS_STRICT:
-        html_doc = PyQuery(html_text)
+    selectors = CHALLENGE_SELECTORS_STRICT + EMBEDDED_CAPTCHA_SELECTORS if include_embedded else CHALLENGE_SELECTORS_STRICT
+    html_doc = PyQuery(html_text)
+    for selector in selectors:
         if html_doc(selector):
             return True
     return False
@@ -170,22 +172,45 @@ async def _evil_logic(tab: Tab):
     challenge_found = title_challenge or strict_selector_challenge
 
     if challenge_found:
-        # Determine which selectors to wait for: on a real challenge page we
-        # wait for ALL selectors (including embedded CAPTCHAs) to disappear;
-        # otherwise only strict challenge selectors need to clear.
         wait_selectors = CHALLENGE_SELECTORS if title_challenge else CHALLENGE_SELECTORS_STRICT
 
-        while not (await _wait_until_condition(tab, CHALLENGE_TITLES, lambda d, t: d.target.title.lower() != t.lower(), async_type=False, message="title changes") and
-                   await _wait_until_condition(tab, wait_selectors, async_match_selectors_not, async_type=True, message="selectors disappear")):
+        async def _challenge_cleared():
+            return (await _wait_until_condition(tab, CHALLENGE_TITLES, lambda d, t: d.target.title.lower() != t.lower(),
+                                                async_type=False, message="title changes") and
+                    await _wait_until_condition(tab, wait_selectors, async_match_selectors_not,
+                                                async_type=True, message="selectors disappear"))
+
+        solved = await _challenge_cleared()
+        while not solved:
             log.debug("Timeout waiting for selector")
             verification_result = await click_verify(tab)
             if verification_result:
                 log.info("Human verification completed successfully!")
-                break
+            solved = await _challenge_cleared()
 
-        log.info("Challenge solved!")
+        if solved:
+            log.info("Challenge solved!")
+            return True
+        return False
     else:
-        log.info("Challenge not detected!")
+        embedded_captcha = await _any_match_selectors(tab, EMBEDDED_CAPTCHA_SELECTORS)
+        if embedded_captcha:
+            log.info(f"Embedded captcha detected: {embedded_captcha}")
+            await asyncio.sleep(2)
+            if await check_verification_success(tab, success_selectors=None, timeout=SHORT_TIMEOUT):
+                log.info("Embedded captcha already passed (auto-verify)")
+                return True
+            if await click_verify(tab):
+                log.info("Challenge solved!")
+                return True
+            if await check_verification_success(tab, success_selectors=None, timeout=SHORT_TIMEOUT):
+                log.info("Embedded captcha passed after verify attempt (auto-verify)")
+                return True
+            log.info("Embedded captcha detected but could not be solved automatically")
+            return False
+        else:
+            log.info("Challenge not detected!")
+            return True
 
 
 async def drag_slider_verify(tab: Tab):
@@ -278,6 +303,16 @@ async def check_verification_success(tab: Tab, success_selectors=None, timeout=1
     
     while time.time() - start_time < timeout:
         try:
+            token_valid = await tab.evaluate("""
+                (() => {
+                    const t = document.querySelector('[name="cf-turnstile-response"]');
+                    return !!(t && t.value && t.value.length > 10);
+                })()
+            """)
+            if token_valid:
+                log.debug("Verification success: valid turnstile token found")
+                return True
+
             success_found = False
             for selector in success_selectors:
                 found, coordinates = await ChromeHelper.find_element(tab, selector)
@@ -310,6 +345,91 @@ async def check_verification_success(tab: Tab, success_selectors=None, timeout=1
     log.debug("Verification success check timeout")
     return False
 
+async def click_turnstile(tab: Tab, timeout=15, max_attempts=3):
+    """
+    通过viewport坐标点击Turnstile checkbox。
+    """
+    from app.helper import ChromeHelper
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            pre_check = await tab.evaluate("""
+                (() => {
+                    const t = document.querySelector('[name="cf-turnstile-response"]');
+                    return (t && t.value && t.value.length > 10) ? 'true' : 'false';
+                })()
+            """)
+            if pre_check == 'true':
+                log.info("click_turnstile: Turnstile already has valid token")
+                return True
+
+            pos_json = await tab.evaluate("""
+                (() => {
+                    const cf = document.querySelector('.cf-turnstile');
+                    if (!cf) return 'null';
+                    const rect = cf.getBoundingClientRect();
+                    return JSON.stringify({x: rect.x, y: rect.y, w: rect.width, h: rect.height});
+                })()
+            """)
+
+            if not pos_json or pos_json == 'null':
+                log.debug("click_turnstile: .cf-turnstile element not found")
+                return False
+
+            pos = json.loads(pos_json)
+            if not pos.get('w') or pos['w'] <= 0:
+                log.debug(f"click_turnstile: invalid element dimensions: {pos}")
+                return False
+
+            # checkbox固定在widget左侧约21px处，垂直居中
+            cx = pos['x'] + 21
+            cy = pos['y'] + pos['h'] / 2
+
+            log.debug(f"click_turnstile: attempt {attempt}/{max_attempts}, "
+                       f"Turnstile rect=({pos['x']:.1f}, {pos['y']:.1f}, {pos['w']:.0f}x{pos['h']:.0f}), "
+                       f"clicking checkbox at ({cx:.1f}, {cy:.1f})")
+
+            await tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+                'type': 'mouseMoved', 'x': cx, 'y': cy, 'button': 'none'
+            }), _is_update=True)
+            await asyncio.sleep(0.1)
+
+            await tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+                'type': 'mousePressed', 'x': cx, 'y': cy, 'button': 'left', 'clickCount': 1
+            }), _is_update=True)
+            await asyncio.sleep(0.08)
+
+            await tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+                'type': 'mouseReleased', 'x': cx, 'y': cy, 'button': 'left', 'clickCount': 1
+            }), _is_update=True)
+
+            log.debug("click_turnstile: click dispatched, waiting for token...")
+
+            start = time.time()
+            while time.time() - start < timeout:
+                token_check = await tab.evaluate("""
+                    (() => {
+                        const t = document.querySelector('[name="cf-turnstile-response"]');
+                        return (t && t.value && t.value.length > 10) ? 'true' : 'false';
+                    })()
+                """)
+                if token_check == 'true':
+                    log.info(f"click_turnstile: Turnstile verification successful! (attempt {attempt})")
+                    return True
+                await asyncio.sleep(0.5)
+
+            log.debug(f"click_turnstile: attempt {attempt} timeout, token not obtained")
+
+        except Exception as e:
+            log.error(f"click_turnstile: attempt {attempt} error: {e}")
+
+        if attempt < max_attempts:
+            await asyncio.sleep(1)
+
+    log.debug(f"click_turnstile: all {max_attempts} attempts failed")
+    return False
+
+
 async def click_verify(tab: Tab):
     from app.helper import ChromeHelper
 
@@ -330,6 +450,19 @@ async def click_verify(tab: Tab):
             log.debug("Cloudflare verify checkbox not found")
     except Exception as e:
         log.debug(f"Cloudflare verify checkbox not found: {str(e)}")
+
+    # Try Turnstile embedded captcha (uses dispatchMouseEvent on .cf-turnstile position)
+    try:
+        log.debug("Try to click Turnstile embedded captcha")
+        if await click_turnstile(tab):
+            log.debug("Turnstile verification completed successfully")
+            try:
+                await asyncio.wait_for(check_document_ready(tab), 20)
+            except asyncio.TimeoutError:
+                log.debug("Timeout waiting for the page")
+            return True
+    except Exception as e:
+        log.debug(f"Turnstile click error: {str(e)}")
 
     # Try chaitin verification button
     try:

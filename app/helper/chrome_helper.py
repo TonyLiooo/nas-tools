@@ -76,6 +76,7 @@ class ChromeHelper(object):
     def __init__(self, headless=False):
 
         self._executable_path = SystemUtils.get_webdriver_path() or driver_executable_path
+        self._ua_override_signature = None
 
         if SystemUtils.is_windows() or SystemUtils.is_macos():
             self._headless = False
@@ -726,6 +727,188 @@ class ChromeHelper(object):
         return False
     
     @staticmethod
+    async def _viewport_center_for_selector(tab: Tab, selector: str):
+        """
+        当 DOM.getBoxModel 因无 layout / nodeId 失效报 -32000 时的备用方案。
+        使用 document.querySelector + getBoundingClientRect 得到视口坐标（与 dispatchMouseEvent 一致）。
+        注意：无法穿透 Shadow DOM；匹配节点须在主 document 或当前 frame 的 document 内。
+        """
+        css = ChromeHelper.xpath_to_css(selector)
+        css_json = json.dumps(css)
+        script = (
+            "(function(){ try { var el = document.querySelector(" + css_json + ");"
+            " if (!el) return ''; var r = el.getBoundingClientRect();"
+            " if (r.width <= 0 || r.height <= 0) return '';"
+            " return JSON.stringify({x: r.left + r.width/2, y: r.top + r.height/2});"
+            " } catch(e) { return ''; } })()"
+        )
+        try:
+            raw = await tab.evaluate(script)
+            if not raw:
+                return None
+            data = json.loads(raw)
+            return float(data["x"]), float(data["y"])
+        except Exception:
+            return None
+
+    @staticmethod
+    async def _scroll_xy(tab: Tab):
+        """当前 frame 文档滚动偏移 (scrollX, scrollY)。"""
+        try:
+            scroll_xy = await tab.evaluate("[window.scrollX || 0, window.scrollY || 0]")
+            if isinstance(scroll_xy, (list, tuple)) and len(scroll_xy) >= 2:
+                return float(scroll_xy[0]), float(scroll_xy[1])
+            if isinstance(scroll_xy, str):
+                pair = json.loads(scroll_xy)
+                return float(pair[0]), float(pair[1])
+        except Exception:
+            pass
+        return 0.0, 0.0
+
+    @staticmethod
+    async def _dispatch_mouse_click_viewport(process_tab: Tab, vx: float, vy: float):
+        """在视口坐标 (vx, vy) 上依次派发 move / press / release（与 Input.dispatchMouseEvent 约定一致）。"""
+        await process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+            'type': 'mouseMoved',
+            'x': vx,
+            'y': vy,
+            'button': 'none'
+        }), _is_update=True)
+        await process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+            'type': 'mousePressed',
+            'x': vx,
+            'y': vy,
+            'button': 'left',
+            'clickCount': 1
+        }), _is_update=True)
+        await process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
+            'type': 'mouseReleased',
+            'x': vx,
+            'y': vy,
+            'button': 'left',
+            'clickCount': 1
+        }), _is_update=True)
+
+    @staticmethod
+    async def _inner_width_height(tab: Tab):
+        try:
+            wh = await tab.evaluate("[window.innerWidth||0, window.innerHeight||0]")
+            if isinstance(wh, (list, tuple)) and len(wh) >= 2:
+                return float(wh[0]), float(wh[1])
+            if isinstance(wh, str):
+                a = json.loads(wh)
+                return float(a[0]), float(a[1])
+        except Exception:
+            pass
+        return 1280.0, 800.0
+
+    @staticmethod
+    async def _element_intersects_viewport(tab: Tab, selector: str):
+        """
+        元素是否与当前视口有交集（document.querySelector，不穿透 shadow）。
+        返回 True/False；查无节点返回 False。
+        """
+        css = ChromeHelper.xpath_to_css(selector)
+        css_json = json.dumps(css)
+        script = (
+            "(function(){ try { var el = document.querySelector(" + css_json + ");"
+            " if (!el) return false; var r = el.getBoundingClientRect();"
+            " if (r.width <= 0 || r.height <= 0) return false;"
+            " var w = window.innerWidth || document.documentElement.clientWidth;"
+            " var h = window.innerHeight || document.documentElement.clientHeight;"
+            " return r.bottom > 0 && r.right > 0 && r.left < w && r.top < h;"
+            " } catch(e){ return false; } })()"
+        )
+        try:
+            v = await tab.evaluate(script)
+            return bool(v)
+        except Exception:
+            return False
+
+    @staticmethod
+    async def _scroll_into_view_js(tab: Tab, selector: str) -> bool:
+        """使用 JS scrollIntoView 将元素滚入视口（CDP scrollIntoViewIfNeeded 失败时的补充）。"""
+        css = ChromeHelper.xpath_to_css(selector)
+        css_json = json.dumps(css)
+        script = (
+            "(function(){ try { var el = document.querySelector(" + css_json + ");"
+            " if (!el) return false;"
+            " el.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'auto'});"
+            " return true;"
+            " } catch(e){ return false; } })()"
+        )
+        try:
+            return bool(await tab.evaluate(script))
+        except Exception:
+            return False
+
+    @staticmethod
+    async def _dom_click_selector(tab: Tab, selector: str) -> bool:
+        """DOM 原生 HTMLElement.click()，不依赖合成鼠标事件（视口外或坐标不可靠时回退）。"""
+        css = ChromeHelper.xpath_to_css(selector)
+        css_json = json.dumps(css)
+        script = (
+            "(function(){ try { var el = document.querySelector(" + css_json + ");"
+            " if (!el) return false; el.click(); return true;"
+            " } catch(e){ return false; } })()"
+        )
+        try:
+            return bool(await tab.evaluate(script))
+        except Exception:
+            return False
+
+    @staticmethod
+    async def _refine_viewport_click_coords(tab: Tab, selector: str, vx: float, vy: float):
+        """
+        若视口坐标落在可视区域内且元素与视口相交，返回 (vx, vy)。
+        否则尝试 JS scrollIntoView 后重新计算中心点；仍不可点则返回 None（上层应改用 DOM click）。
+        """
+        w, h = await ChromeHelper._inner_width_height(tab)
+        margin = 2.0
+
+        def pin_ok(px: float, py: float) -> bool:
+            return margin <= px <= w - margin and margin <= py <= h - margin
+
+        inter = await ChromeHelper._element_intersects_viewport(tab, selector)
+        if pin_ok(vx, vy) and inter:
+            return float(vx), float(vy)
+
+        if await ChromeHelper._scroll_into_view_js(tab, selector):
+            await asyncio.sleep(0.25)
+        vw = await ChromeHelper._viewport_center_for_selector(tab, selector)
+        if not vw:
+            return None
+        vx, vy = vw[0], vw[1]
+        inter = await ChromeHelper._element_intersects_viewport(tab, selector)
+        if pin_ok(vx, vy) and inter:
+            return float(vx), float(vy)
+        return None
+
+    @staticmethod
+    async def _perform_click_with_fallback(process_tab: Tab, selector: str, vx: float, vy: float):
+        """
+        视口内则 CDP 合成点击；否则尝试滚动后仍不可点则 DOM 原生 click。
+        返回 (是否成功, 文档坐标约 (x,y) 供返回；失败为 (False, None)，DOM 点击后无坐标则为 (True, None))。
+        """
+        refined = await ChromeHelper._refine_viewport_click_coords(process_tab, selector, vx, vy)
+        if refined is not None:
+            vx, vy = refined
+            sx, sy = await ChromeHelper._scroll_xy(process_tab)
+            await ChromeHelper._dispatch_mouse_click_viewport(process_tab, vx, vy)
+            return True, (vx + sx, vy + sy)
+        if await ChromeHelper._dom_click_selector(process_tab, selector):
+            log.debug(
+                "合成鼠标不可用（元素不在视口或坐标不可靠），已回退为 DOM 原生 click: selector=%s",
+                selector,
+            )
+            sx, sy = await ChromeHelper._scroll_xy(process_tab)
+            vw = await ChromeHelper._viewport_center_for_selector(process_tab, selector)
+            if vw:
+                return True, (vw[0] + sx, vw[1] + sy)
+            return True, None
+        return False, None
+
+    @staticmethod
     async def find_and_click_element(tab:Tab, selector, click_enabled=True, max_depth=-1, timeout=10):
         """
         查找元素并可选择点击
@@ -804,22 +987,51 @@ class ChromeHelper(object):
 
         try:
             async def execute_element_search():
-                document = await tab.send(ChromeHelper.cdp_generator("DOM.getDocument", {"depth": -1, "pierce": True}), _is_update=True)
-                process_tab, result = await process_node(tab, document['root'])
+                """
+                getBoxModel 常见 -32000：
+                - Node does not have a layout object：节点在 DOM 中但尚未参与布局（隐藏/零尺寸/Turnstile 重绘中等）
+                - Could not find node with given id：DOM 更新导致 nodeId 失效
+                处理：最多刷新 DOM 重取 nodeId 重试一次；仍失败则交给 getBoundingClientRect 备用路径。
+                """
+                process_tab_out = None
+                result_out = None
+                node_id_out = None
+                last_get_box_fail = None
+                for dom_retry in range(2):
+                    document = await tab.send(ChromeHelper.cdp_generator("DOM.getDocument", {"depth": -1, "pierce": True}), _is_update=True)
+                    process_tab, result = await process_node(tab, document['root'])
 
-                if result is None or 'nodeId' not in result or result['nodeId'] is None:
-                    return False, None
-                
-                node_id = result['nodeId']
-                box_model = None
-                try:
-                    box_model = await process_tab.send(ChromeHelper.cdp_generator('DOM.getBoxModel', {
-                        'nodeId': node_id
-                    }), _is_update=True)
-                except Exception as e:
-                    log.debug(f"Error getting box model: {e}")
-                return process_tab, result, box_model, node_id
-            
+                    if result is None or 'nodeId' not in result or result['nodeId'] is None:
+                        return False, None
+
+                    node_id = result['nodeId']
+                    process_tab_out = process_tab
+                    result_out = result
+                    node_id_out = node_id
+                    box_model = None
+                    try:
+                        await process_tab.send(ChromeHelper.cdp_generator('DOM.scrollIntoViewIfNeeded', {
+                            'nodeId': node_id
+                        }), _is_update=True)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.35 if dom_retry == 0 else 0.5)
+                    try:
+                        box_model = await process_tab.send(ChromeHelper.cdp_generator('DOM.getBoxModel', {
+                            'nodeId': node_id
+                        }), _is_update=True)
+                        if box_model and 'model' in box_model and 'content' in box_model['model']:
+                            return process_tab, result, box_model, node_id
+                        last_get_box_fail = "无有效 content"
+                    except Exception as e:
+                        last_get_box_fail = str(e)
+                if last_get_box_fail:
+                    log.debug(
+                        "getBoxModel 经 2 次 DOM 刷新后仍不可用（可忽略 -32000 等，将尝试 JS 视口坐标）: %s",
+                        last_get_box_fail,
+                    )
+                return process_tab_out, result_out, None, node_id_out
+
             search_result = await asyncio.wait_for(execute_element_search(), timeout=timeout)
             if len(search_result) == 2:  # 返回了 False, None
                 return search_result
@@ -835,39 +1047,43 @@ class ChromeHelper(object):
             content = box_model['model']['content']
             x_min, y_min = content[0], content[1]
             x_max, y_max = content[4], content[5]
-            x_center = (x_min + x_max) / 2
-            y_center = (y_min + y_max) / 2
-            coordinates = (x_center, y_center)
-
+            doc_x = (x_min + x_max) / 2
+            doc_y = (y_min + y_max) / 2
+            coordinates = (doc_x, doc_y)
             if click_enabled:
-                await process_tab.send(ChromeHelper.cdp_generator('DOM.scrollIntoViewIfNeeded', {
-                    'nodeId': node_id
-                }), _is_update=True)
-
-                await process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
-                    'type': 'mouseMoved',
-                    'x': x_center,
-                    'y': y_center,
-                    'button': 'none'
-                }), _is_update=True)
-
-                await process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
-                    'type': 'mousePressed',
-                    'x': x_center,
-                    'y': y_center,
-                    'button': 'left',
-                    'clickCount': 1
-                }), _is_update=True)
-
-                await process_tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
-                    'type': 'mouseReleased',
-                    'x': x_center,
-                    'y': y_center,
-                    'button': 'left',
-                    'clickCount': 1
-                }), _is_update=True)
-            
+                sx, sy = await ChromeHelper._scroll_xy(process_tab)
+                vx = doc_x - sx
+                vy = doc_y - sy
+                ok, doc_coords = await ChromeHelper._perform_click_with_fallback(
+                    process_tab, selector, vx, vy
+                )
+                if not ok:
+                    return False, None
+                if doc_coords is not None:
+                    coordinates = doc_coords
             return True, coordinates
+        elif click_enabled and node_id:
+            vw = await ChromeHelper._viewport_center_for_selector(process_tab, selector)
+            if not vw:
+                if await ChromeHelper._dom_click_selector(process_tab, selector):
+                    log.debug(
+                        "getBoxModel 不可用且未取得视口坐标，已使用 DOM 原生 click: %s",
+                        selector,
+                    )
+                    return True, None
+                return False, None
+            vx, vy = vw
+            log.debug(
+                "getBoxModel 不可用，按视口坐标尝试合成点击（必要时滚动或 DOM click）: (%.1f, %.1f)",
+                vx,
+                vy,
+            )
+            ok, doc_coords = await ChromeHelper._perform_click_with_fallback(
+                process_tab, selector, vx, vy
+            )
+            if not ok:
+                return False, None
+            return True, doc_coords
         elif not click_enabled and node_id:
             return True, None
         else:
@@ -940,6 +1156,93 @@ class ChromeHelper(object):
             options.user_data_dir = user_data_dir
         chrome = await RetryBrowser.create(config=options, max_retries=5, retry_interval=2)
         return chrome
+
+    @staticmethod
+    def _build_user_agent_metadata(user_agent: str):
+        if not user_agent:
+            return None
+        version_match = re.search(r'(?:Chrome|Chromium)/(\d+)\.(\d+)\.(\d+)\.(\d+)', user_agent)
+        if not version_match:
+            return None
+
+        major_version = version_match.group(1)
+        full_version = '.'.join(version_match.groups())
+        mobile = 'Mobile' in user_agent
+
+        platform = 'Linux'
+        platform_version = '0.0.0'
+        architecture = 'x86'
+        bitness = '64'
+        wow64 = False
+
+        if 'Windows' in user_agent:
+            platform = 'Windows'
+            platform_version = '10.0.0' if 'Windows NT 10.0' in user_agent else '6.1.0'
+            architecture = 'x86'
+            bitness = '64' if any(flag in user_agent for flag in ['Win64', 'x64', 'WOW64']) else '32'
+            wow64 = 'WOW64' in user_agent
+        elif 'Mac OS X' in user_agent:
+            platform = 'macOS'
+            mac_match = re.search(r'Mac OS X (\d+)[_.](\d+)(?:[_.](\d+))?', user_agent)
+            if mac_match:
+                platform_version = '.'.join([part or '0' for part in mac_match.groups()])
+            architecture = 'arm' if 'ARM' in user_agent or 'Apple Silicon' in user_agent else 'x86'
+            bitness = '64'
+        elif 'Android' in user_agent:
+            platform = 'Android'
+            android_match = re.search(r'Android (\d+)(?:[.](\d+))?(?:[.](\d+))?', user_agent)
+            if android_match:
+                platform_version = '.'.join([part or '0' for part in android_match.groups()])
+            architecture = ''
+            bitness = ''
+
+        return {
+            'brands': [
+                {'brand': 'Chromium', 'version': major_version},
+                {'brand': 'Not A(Brand', 'version': '24'},
+            ],
+            'fullVersionList': [
+                {'brand': 'Chromium', 'version': full_version},
+                {'brand': 'Not A(Brand', 'version': '24.0.0.0'},
+            ],
+            'fullVersion': full_version,
+            'platform': platform,
+            'platformVersion': platform_version,
+            'architecture': architecture,
+            'model': '',
+            'mobile': mobile,
+            'bitness': bitness,
+            'wow64': wow64,
+        }
+
+    async def _apply_user_agent_override(self):
+        if not self._tab or not self._ua:
+            return False
+
+        signature = (id(self._tab), self._ua)
+        if self._ua_override_signature == signature:
+            return False
+
+        override_params = {
+            'userAgent': self._ua,
+            'acceptLanguage': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'platform': 'Linux',
+        }
+        metadata = self._build_user_agent_metadata(self._ua)
+        if metadata:
+            override_params['userAgentMetadata'] = metadata
+            override_params['platform'] = metadata.get('platform') or override_params['platform']
+
+        await self._tab.send(ChromeHelper.cdp_generator('Network.setUserAgentOverride', override_params), _is_update=True)
+        self._ua_override_signature = signature
+        log.debug(f"Applied CDP user agent override for: {self._ua}")
+        return True
+
+    async def _ensure_user_agent_override(self, timeout):
+        if not self._ua or not self._tab:
+            return
+        if await self._apply_user_agent_override():
+            await self._reload_page(timeout)
 
     async def _open_page(self, url, timeout, new_tab=False):
         """打开页面并等待加载完成"""
@@ -1029,6 +1332,7 @@ class ChromeHelper(object):
                 # 已认证同域名时直接导航
                 if self._authenticated_domain == current_domain and self._tab:
                     await self._navigate(url, timeout)
+                    await self._ensure_user_agent_override(timeout)
                     return True
                 
                 should_inject_data = True
@@ -1070,6 +1374,8 @@ class ChromeHelper(object):
                 if not self._tab:
                     await self._open_page(url, timeout, new_tab)
                     self._authenticated_domain = current_domain
+
+                await self._ensure_user_agent_override(timeout)
                 
                 if site_domain:
                     ChromeHelper.update_site_profile_access_time(site_domain)
