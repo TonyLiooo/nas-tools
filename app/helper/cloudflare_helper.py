@@ -1,6 +1,8 @@
 import time
 import os
+import re
 import json
+from random import randint, uniform
 
 from pyquery import PyQuery
 
@@ -54,25 +56,69 @@ CHALLENGE_SELECTORS = CHALLENGE_SELECTORS_STRICT + EMBEDDED_CAPTCHA_SELECTORS
 SHORT_TIMEOUT = 10
 CF_TIMEOUT = int(os.getenv("NASTOOL_CF_TIMEOUT", "120"))
 
+# --- Scrapling-inspired challenge type detection ---
+_CF_CTYPE_PATTERN = re.compile(r"cType:\s*'(non-interactive|managed|interactive)'")
+_CF_TURNSTILE_SCRIPT_PATTERN = re.compile(r'challenges\.cloudflare\.com/turnstile/v')
+
+
+def detect_challenge_type(html_content: str):
+    """
+    检测 Cloudflare 挑战类型，参考 Scrapling _detect_cloudflare 方法。
+    
+    通过页面 HTML 源码中的 cType 标识精确判定挑战机制：
+    - 'non-interactive': 无需任何操作，只需等待自动通过
+    - 'managed': 托管式挑战，可能需要点击
+    - 'interactive': 交互式挑战，需要点击验证
+    - 'embedded': 嵌入式 Turnstile 验证码
+    - None: 无挑战或无法识别
+    
+    :param html_content: 页面 HTML 内容
+    :return: 挑战类型字符串或 None
+    """
+    if not html_content:
+        return None
+    
+    match = _CF_CTYPE_PATTERN.search(html_content)
+    if match:
+        return match.group(1)
+    
+    # 检查是否为嵌入式 Turnstile（通常在 Shadow iframe 内）
+    if _CF_TURNSTILE_SCRIPT_PATTERN.search(html_content):
+        return "embedded"
+    
+    return None
+
 
 async def resolve_challenge(tab: Tab, timeout=CF_TIMEOUT):
     start_ts = time.time()
+    challenge_type = None
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         try:
-            return bool(await asyncio.wait_for(_evil_logic(tab), timeout=timeout))
+            result, challenge_type = await asyncio.wait_for(_evil_logic(tab), timeout=timeout)
+            elapsed_ms = round((time.time() - start_ts) * 1000)
+            if result:
+                if challenge_type:
+                    log.info(f"[CF] 挑战通过，类型={challenge_type}，耗时={elapsed_ms}ms")
+                else:
+                    log.debug(f"[CF] 无挑战，页面正常，耗时={elapsed_ms}ms")
+            else:
+                log.warn(f"[CF] 挑战未通过，类型={challenge_type or 'unknown'}，耗时={elapsed_ms}ms")
+            return bool(result)
         except asyncio.TimeoutError:
             if attempt < max_retries:
                 await tab.reload()
                 await asyncio.sleep(1)
                 continue
-            log.error(f'Error solving the challenge. Timeout {timeout} after {round(time.time() - start_ts, 1)} seconds.')
+            elapsed_ms = round((time.time() - start_ts) * 1000)
+            log.error(f'[CF] 挑战超时，类型={challenge_type or "unknown"}，超时={timeout}s，耗时={elapsed_ms}ms')
             return False
         except Exception as e:
             if attempt < max_retries:
                 await asyncio.sleep(1)
                 continue
-            log.error('Error solving the challenge. ' + str(e))
+            elapsed_ms = round((time.time() - start_ts) * 1000)
+            log.error(f'[CF] 挑战异常，类型={challenge_type or "unknown"}，耗时={elapsed_ms}ms，错误: {e}')
             return False
 
 
@@ -108,6 +154,76 @@ async def check_document_ready(tab:Tab):
             pass
         await asyncio.sleep(1)
     return True
+
+
+async def wait_for_page_stability(tab: Tab, timeout=15):
+    """
+    等待页面稳定：DOM 加载完成 + 网络空闲。
+    参考 Scrapling 的 _wait_for_page_stability：load -> domcontentloaded -> networkidle。
+    
+    :param tab: Tab对象
+    :param timeout: 超时时间（秒）
+    """
+    start = time.time()
+    
+    # Phase 1: 等待 readyState == 'complete'
+    while time.time() - start < timeout:
+        try:
+            state = await tab.evaluate('document.readyState')
+            if state == 'complete':
+                break
+        except Exception:
+            pass
+        await asyncio.sleep(0.3)
+    
+    # Phase 2: 网络空闲检测（检查是否有未完成的资源加载）
+    idle_start = time.time()
+    while time.time() - start < timeout:
+        try:
+            pending = await tab.evaluate("""
+                (() => {
+                    try {
+                        const entries = performance.getEntriesByType('resource');
+                        let pending = 0;
+                        for (let i = entries.length - 1; i >= Math.max(0, entries.length - 20); i--) {
+                            if (entries[i].responseEnd === 0) pending++;
+                        }
+                        return pending;
+                    } catch(e) { return 0; }
+                })()
+            """)
+            if pending == 0 or pending is None:
+                # 连续 0.5s 无活动认为网络空闲
+                if time.time() - idle_start > 0.5:
+                    break
+            else:
+                idle_start = time.time()
+        except Exception:
+            break
+        await asyncio.sleep(0.2)
+
+
+async def _is_challenge_title_present(tab: Tab):
+    """检查当前 tab title 是否为 CF 挑战 title"""
+    try:
+        title = (tab.target.title or '').lower()
+        return any(title == t.lower() for t in CHALLENGE_TITLES)
+    except Exception:
+        return False
+
+
+async def _wait_for_challenge_title_gone(tab: Tab, timeout=60):
+    """
+    等待 CF 挑战 title 消失（用于 non-interactive 模式）。
+    不执行任何 DOM 查询或点击，只检查 title。
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        if not await _is_challenge_title_present(tab):
+            return True
+        await asyncio.sleep(1)
+    return False
+
 
 async def _until_match_func(tab: Tab, item, match_func, async_type=True):
     if async_type:
@@ -156,6 +272,12 @@ async def _any_match_selectors(tab: Tab, selectors):
 
 
 async def _evil_logic(tab: Tab):
+    """
+    核心挑战处理逻辑。
+    返回 (result: bool, challenge_type: str|None)
+    """
+    challenge_type = None
+    
     # wait for the page to load
     try:
         await asyncio.wait_for(check_document_ready(tab), 20)
@@ -166,12 +288,36 @@ async def _evil_logic(tab: Tab):
     if await _any_match_titles(tab, ACCESS_DENIED_TITLES) or await _any_match_selectors(tab, ACCESS_DENIED_SELECTORS):
         raise Exception('Cloudflare has blocked this request. Probably your IP is banned for this site, check in your web browser.')
 
+    # --- Phase 1: 检测挑战类型 ---
+    try:
+        html_content = await tab.get_content()
+        challenge_type = detect_challenge_type(html_content)
+        if challenge_type:
+            log.info(f"[CF] 识别挑战类型: {challenge_type}")
+    except Exception as e:
+        log.debug(f"[CF] 获取页面内容检测挑战类型失败: {e}")
+
     title_challenge = await _any_match_titles(tab, CHALLENGE_TITLES)
     strict_selector_challenge = await _any_match_selectors(tab, CHALLENGE_SELECTORS_STRICT)
 
     challenge_found = title_challenge or strict_selector_challenge
 
     if challenge_found:
+        # --- Phase 2: 按挑战类型分类施治 ---
+        
+        if challenge_type == 'non-interactive':
+            # non-interactive 模式：只需静默等待，不做任何点击或 DOM 查询
+            # 参考 Scrapling: 只循环等待 "Just a moment..." title 消失
+            log.info("[CF] non-interactive 类型，静默等待自动通过...")
+            if await _wait_for_challenge_title_gone(tab, timeout=60):
+                await wait_for_page_stability(tab, timeout=10)
+                log.info("[CF] non-interactive 挑战已自动通过")
+                return True, challenge_type
+            else:
+                log.warn("[CF] non-interactive 等待超时，尝试常规验证流程")
+                # 降级到常规处理
+        
+        # managed / interactive / unknown 模式：使用验证点击
         wait_selectors = CHALLENGE_SELECTORS if title_challenge else CHALLENGE_SELECTORS_STRICT
 
         async def _challenge_cleared():
@@ -180,37 +326,50 @@ async def _evil_logic(tab: Tab):
                     await _wait_until_condition(tab, wait_selectors, async_match_selectors_not,
                                                 async_type=True, message="selectors disappear"))
 
+        # 对于 managed 类型，先等待 "Verifying you are human." 消失
+        if challenge_type == 'managed':
+            log.info("[CF] managed 类型，等待验证旋转器消失...")
+            verify_start = time.time()
+            while time.time() - verify_start < 10:
+                try:
+                    content = await tab.get_content()
+                    if "Verifying you are human." not in content:
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
+
         solved = await _challenge_cleared()
         while not solved:
-            log.debug("Timeout waiting for selector")
+            log.debug("[CF] 挑战未清除，尝试验证点击")
             verification_result = await click_verify(tab)
             if verification_result:
-                log.info("Human verification completed successfully!")
+                log.info("[CF] 人机验证点击完成")
             solved = await _challenge_cleared()
 
         if solved:
-            log.info("Challenge solved!")
-            return True
-        return False
+            await wait_for_page_stability(tab, timeout=10)
+            return True, challenge_type
+        return False, challenge_type
     else:
         embedded_captcha = await _any_match_selectors(tab, EMBEDDED_CAPTCHA_SELECTORS)
         if embedded_captcha:
-            log.info(f"Embedded captcha detected: {embedded_captcha}")
+            challenge_type = challenge_type or "embedded"
+            log.info(f"[CF] 嵌入式验证码检测到: {embedded_captcha}，类型={challenge_type}")
             await asyncio.sleep(2)
             if await check_verification_success(tab, success_selectors=None, timeout=SHORT_TIMEOUT):
-                log.info("Embedded captcha already passed (auto-verify)")
-                return True
+                log.info("[CF] 嵌入式验证码已自动通过")
+                return True, challenge_type
             if await click_verify(tab):
-                log.info("Challenge solved!")
-                return True
+                await wait_for_page_stability(tab, timeout=10)
+                return True, challenge_type
             if await check_verification_success(tab, success_selectors=None, timeout=SHORT_TIMEOUT):
-                log.info("Embedded captcha passed after verify attempt (auto-verify)")
-                return True
-            log.info("Embedded captcha detected but could not be solved automatically")
-            return False
+                log.info("[CF] 嵌入式验证码在点击后自动通过")
+                return True, challenge_type
+            log.info("[CF] 嵌入式验证码无法自动解决")
+            return False, challenge_type
         else:
-            log.info("Challenge not detected!")
-            return True
+            return True, challenge_type
 
 
 async def drag_slider_verify(tab: Tab):
@@ -344,6 +503,7 @@ async def check_verification_success(tab: Tab, success_selectors=None, timeout=1
 async def click_turnstile(tab: Tab, timeout=15, max_attempts=3):
     """
     通过viewport坐标点击Turnstile checkbox。
+    使用随机坐标偏移和点击延迟，模拟真实人类操作。
     """
     from app.helper import ChromeHelper
 
@@ -377,23 +537,29 @@ async def click_turnstile(tab: Tab, timeout=15, max_attempts=3):
                 log.debug(f"click_turnstile: invalid element dimensions: {pos}")
                 return False
 
-            # checkbox固定在widget左侧约21px处，垂直居中
-            cx = pos['x'] + 21
-            cy = pos['y'] + pos['h'] / 2
+            # checkbox 固定在 widget 左侧约 26-28px 处，垂直 25-27px
+            cx = pos['x'] + randint(26, 28)
+            cy = pos['y'] + randint(25, 27)
 
             log.debug(f"click_turnstile: attempt {attempt}/{max_attempts}, "
                        f"Turnstile rect=({pos['x']:.1f}, {pos['y']:.1f}, {pos['w']:.0f}x{pos['h']:.0f}), "
                        f"clicking checkbox at ({cx:.1f}, {cy:.1f})")
 
+            await asyncio.sleep(uniform(0.02, 0.08))
+
             await tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
                 'type': 'mouseMoved', 'x': cx, 'y': cy, 'button': 'none'
             }), _is_update=True)
-            await asyncio.sleep(0.1)
+            
+            await asyncio.sleep(uniform(0.05, 0.15))
 
             await tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
                 'type': 'mousePressed', 'x': cx, 'y': cy, 'button': 'left', 'clickCount': 1
             }), _is_update=True)
-            await asyncio.sleep(0.08)
+            
+            # 按下和释放之间的随机延迟（模拟人类按下时长）
+            # 参考 Scrapling: delay=randint(100, 200) ms
+            await asyncio.sleep(uniform(0.10, 0.20))
 
             await tab.send(ChromeHelper.cdp_generator('Input.dispatchMouseEvent', {
                 'type': 'mouseReleased', 'x': cx, 'y': cy, 'button': 'left', 'clickCount': 1
@@ -436,6 +602,7 @@ async def click_verify(tab: Tab):
         status, coordinates = await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
         if status:
             log.debug(f"Cloudflare verify checkbox found and clicked at {coordinates}")
+            await asyncio.sleep(uniform(0.05, 0.15))
             if await check_verification_success(tab, success_selectors=None):
                 try:
                     await asyncio.wait_for(check_document_ready(tab), 20)
@@ -467,6 +634,7 @@ async def click_verify(tab: Tab):
         status, coordinates = await ChromeHelper.find_and_click_element(tab=tab, selector=selector)
         if status:
             log.debug(f"chaitin verify checkbox found and clicked at {coordinates}")
+            await asyncio.sleep(uniform(0.05, 0.15))
             try:
                 await asyncio.wait_for(check_document_ready(tab), 20)
             except asyncio.TimeoutError:

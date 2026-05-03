@@ -26,6 +26,114 @@ _SPAWN_THREAD_LOCK = threading.Lock()
 
 driver_executable_path = None
 
+# --- 分层浏览器启动参数 ---
+
+# 有害参数 - 会暴露自动化特征，绝对禁止使用
+HARMFUL_ARGS = frozenset({
+    '--enable-automation',
+    '--disable-popup-blocking',
+    '--disable-component-update',
+    '--disable-default-apps',
+    '--disable-extensions',
+})
+
+# 默认参数 - 提升性能和屏蔽无用提示
+DEFAULT_ARGS = (
+    '--no-pings',
+    '--no-first-run',
+    '--disable-infobars',
+    '--disable-breakpad',
+    '--no-service-autorun',
+    '--homepage=about:blank',
+    '--password-store=basic',
+    '--disable-hang-monitor',
+    '--no-default-browser-check',
+    '--disable-session-crashed-bubble',
+    '--disable-search-engine-choice-screen',
+)
+
+# 隐身参数 - 反检测增强核心
+STEALTH_ARGS = (
+    '--test-type',
+    '--mute-audio',
+    '--disable-sync',
+    '--hide-scrollbars',
+    '--disable-logging',
+    '--start-maximized',
+    '--enable-async-dns',
+    '--use-mock-keychain',
+    '--disable-translate',
+    '--disable-voice-input',
+    '--window-position=0,0',
+    '--disable-wake-on-wifi',
+    '--ignore-gpu-blocklist',
+    '--enable-tcp-fast-open',
+    '--enable-web-bluetooth',
+    '--disable-cloud-import',
+    '--disable-print-preview',
+    '--disable-dev-shm-usage',
+    '--metrics-recording-only',
+    '--disable-crash-reporter',
+    '--disable-partial-raster',
+    '--disable-gesture-typing',
+    '--disable-checker-imaging',
+    '--disable-prompt-on-repost',
+    '--force-color-profile=srgb',
+    '--font-render-hinting=none',
+    '--aggressive-cache-discard',
+    '--disable-cookie-encryption',
+    '--disable-domain-reliability',
+    '--disable-threaded-animation',
+    '--disable-threaded-scrolling',
+    '--enable-simple-cache-backend',
+    '--disable-background-networking',
+    '--enable-surface-synchronization',
+    '--disable-image-animation-resync',
+    '--disable-renderer-backgrounding',
+    '--disable-ipc-flooding-protection',
+    '--prerender-from-omnibox=disabled',
+    '--safebrowsing-disable-auto-update',
+    '--disable-offer-upload-credit-cards',
+    '--disable-background-timer-throttling',
+    '--disable-new-content-rendering-timeout',
+    '--run-all-compositor-stages-before-draw',
+    '--disable-client-side-phishing-detection',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-layer-tree-host-memory-pressure',
+    '--autoplay-policy=user-gesture-required',
+    '--disable-offer-store-unmasked-wallet-cards',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-component-extensions-with-background-pages',
+    '--enable-features=NetworkService,NetworkServiceInProcess,TrustTokens,TrustTokensAlwaysAllowIssuance',
+    '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',
+    '--disable-features=AudioServiceOutOfProcess,TranslateUI,BlinkGenPropertyTrees',
+)
+
+# 容器/环境专用参数 - 在 Docker/Linux 无头环境下额外添加
+_CONTAINER_ARGS = (
+    '--disable-gpu',
+    '--disable-setuid-sandbox',
+    '--no-zygote',
+    '--disable-gpu-sandbox',
+    '--disable-software-rasterizer',
+    '--use-gl=swiftshader',
+    '--ignore-certificate-errors',
+    '--ignore-ssl-errors',
+    '--disable-plugins-discovery',
+)
+
+# 代理错误特征集（对齐 Scrapling proxy_rotation.py）
+PROXY_ERROR_INDICATORS = frozenset({
+    'net::err_proxy',
+    'net::err_tunnel',
+    'connection refused',
+    'connection reset',
+    'connection timed out',
+    'failed to connect',
+    'could not resolve proxy',
+    'err_proxy_connection_failed',
+})
+
 sub_regexes = {
     "tag": r"([a-zA-Z][a-zA-Z0-9]{0,10}|\*)",
     "attribute": r"[.a-zA-Z_:][-\w:.]*(\(\))?)",
@@ -512,8 +620,19 @@ class ChromeHelper(object):
         return iframe_tab
     
     @staticmethod
-    async def check_document_ready(tab:Tab):
+    async def check_document_ready(tab:Tab, wait_network_idle=False, timeout=30):
+        """
+        增强版文档就绪检查，支持可选的网络空闲等待。
+        参考 Scrapling 的 _wait_for_page_stability 三阶段模型：
+        Phase 1: readyState 非 loading
+        Phase 2: 可选的网络空闲检测
+        """
+        start = time.time()
+        # Phase 1: 等待 readyState 非 loading
         while await tab.evaluate('document.readyState') == 'loading':
+            if time.time() - start > timeout:
+                log.debug("check_document_ready: readyState timeout")
+                break
             try:
                 title = (tab.target.title or '').lower()
                 if any(title == t.lower() for t in CloudflareHelper.CHALLENGE_TITLES):
@@ -521,8 +640,55 @@ class ChromeHelper(object):
                     return True
             except Exception:
                 pass
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
+        
+        # Phase 2: 可选的网络空闲检测
+        if wait_network_idle and (time.time() - start) < timeout:
+            remaining = timeout - (time.time() - start)
+            await ChromeHelper._wait_for_network_idle(tab, timeout=remaining)
+        
         return True
+    
+    @staticmethod
+    async def _wait_for_network_idle(tab: Tab, timeout=10, idle_threshold=0.5):
+        """
+        等待网络空闲：检查是否有未完成的资源加载。
+        连续 idle_threshold 秒无活动即认为网络空闲。
+        """
+        start = time.time()
+        idle_start = time.time()
+        while time.time() - start < timeout:
+            try:
+                pending = await tab.evaluate("""
+                    (() => {
+                        try {
+                            const entries = performance.getEntriesByType('resource');
+                            let pending = 0;
+                            for (let i = entries.length - 1; i >= Math.max(0, entries.length - 20); i--) {
+                                if (entries[i].responseEnd === 0) pending++;
+                            }
+                            return pending;
+                        } catch(e) { return 0; }
+                    })()
+                """)
+                if pending == 0 or pending is None:
+                    if time.time() - idle_start > idle_threshold:
+                        return True
+                else:
+                    idle_start = time.time()
+            except Exception:
+                return True
+            await asyncio.sleep(0.2)
+        return True
+    
+    @staticmethod
+    def is_proxy_error(error):
+        """
+        检查错误是否为代理链路级故障。
+        对齐 Scrapling proxy_rotation.py 的 is_proxy_error。
+        """
+        error_msg = str(error).lower()
+        return any(indicator in error_msg for indicator in PROXY_ERROR_INDICATORS)
     
     @staticmethod
     def xpath_to_css(xpath: str) -> str:
@@ -1113,24 +1279,27 @@ class ChromeHelper(object):
     async def __get_browser(self, user_data_dir=None):
         options = nd.Config()
         options.sandbox = False
-        options.add_argument('--disable-gpu')
-        options.add_argument('--ignore-certificate-errors')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-plugins-discovery")
-        options.add_argument('--no-first-run')
-        options.add_argument('--no-service-autorun')
-        options.add_argument('--no-default-browser-check')
-        options.add_argument('--password-store=basic')
-        options.add_argument('--disable-setuid-sandbox')
-        options.add_argument('--no-zygote')
-        options.add_argument('--disable-gpu-sandbox')
-        options.add_argument('--disable-software-rasterizer')
-        options.add_argument('--ignore-ssl-errors')
-        options.add_argument('--use-gl=swiftshader')
-        options.add_argument("--disable-popup-blocking")
+        
+        # --- 分层添加启动参数 ---
+        # 1. 默认参数（性能提升和无用提示屏蔽）
+        for arg in DEFAULT_ARGS:
+            options.add_argument(arg)
+        
+        # 2. 隐身参数（反检测核心）
+        for arg in STEALTH_ARGS:
+            options.add_argument(arg)
+        
+        # 3. 容器/环境专用参数
+        for arg in _CONTAINER_ARGS:
+            options.add_argument(arg)
+        
+        # 4. 有害参数审查：确保 nodriver 内部默认参数中没有有害项
+        # nodriver 的 Config 可能内置了某些参数，这里做最终过滤
+        if hasattr(options, '_arguments'):
+            options._arguments = [
+                arg for arg in options._arguments
+                if not any(arg.startswith(harmful) for harmful in HARMFUL_ARGS)
+            ]
 
         if self._ua:
             options.add_argument(f'--user-agent={self._ua}')
@@ -1386,7 +1555,12 @@ class ChromeHelper(object):
                     pass
             except Exception as err:
                 last_err = err
-                log.error(str(err))
+                if ChromeHelper.is_proxy_error(err):
+                    log.warn(f"[Proxy] 代理链路错误（将跳过退避直接重试）: {err}")
+                    if attempt < max_retries:
+                        continue
+                else:
+                    log.error(str(err))
 
             if attempt < max_retries:
                 await asyncio.sleep(backoff)

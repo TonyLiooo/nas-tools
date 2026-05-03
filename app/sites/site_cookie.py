@@ -170,6 +170,16 @@ class SiteCookie(object):
                             await captcha_element.send_keys(captcha)
                         else:
                             pass
+                    try:
+                        keeplogged_xpaths = login_conf.get("keeplogged", [])
+                        for keeplogged_xpath in keeplogged_xpaths:
+                            if html.xpath(keeplogged_xpath):
+                                keeplogged_ele = await chrome.element_to_be_clickable(keeplogged_xpath, timeout=2)
+                                if keeplogged_ele:
+                                    await keeplogged_ele.click()
+                                break
+                    except Exception as e:
+                        log.debug(f"点击记住登录失败: {e}")
                     await submit_obj.scroll_into_view()
                     await submit_obj.mouse_move()
                     await submit_obj.mouse_click()

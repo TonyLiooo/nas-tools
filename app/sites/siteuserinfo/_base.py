@@ -312,7 +312,7 @@ class _ISiteUserInfo(metaclass=ABCMeta):
                     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                     "User-Agent": f"{self._ua}"
                 })
-            else:
+            elif self._ua:
                 req_headers.update(self._ua)
 
             if self._addition_headers:

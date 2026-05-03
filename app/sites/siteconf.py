@@ -81,6 +81,9 @@ class SiteConf:
         "twostep": [
             '//input[@name="two_step_code"]',
             '//input[@name="2fa_secret"]'
+        ],
+        "keeplogged": [
+            '//input[@type="checkbox" and (@id="keeplogged" or @name="keeplogged" or @id="remember" or @name="remember" or @id="remember_me" or @name="remember_me" or @id="rememberme" or @name="rememberme")]'
         ]
     }
 
